@@ -1,0 +1,5 @@
+opencv-python==4.11.0.86
+RPi.GPIO==0.7.1
+mediapipe==0.10.18
+pyyaml==6.0.1
+numpy==1.26.4
