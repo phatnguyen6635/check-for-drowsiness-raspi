@@ -7,6 +7,7 @@ from src.utils import CameraManager
 import yaml
 from yaml import Loader
 import sys
+import time
 
 try:
     import RPi.GPIO as GPIO
@@ -110,6 +111,7 @@ def main():
         # Main loop
         logger.info("Starting detection loop. Press 'Q' or ESC to quit.")
         
+        drowsy_pred = False
         while True:
             try:
                 # Read frame
@@ -145,9 +147,17 @@ def main():
                     )
                 
                 # Control buzzer
-                if drowsy:
+                if drowsy and not drowsy_pred:
+                    delay = time.time()
+                
+                if drowsy and time.time() - delay > 2:
                     logger.info("Worker is sleeping")
-                set_buzzer(buzzer_pin, drowsy, gpio_enabled, logger)
+                    flag = True
+                else:
+                    flag = False
+                
+                drowsy_pred = drowsy
+                set_buzzer(buzzer_pin, flag, gpio_enabled, logger)
                 
                 annotated_frame = draw_face_landmarks(rgb, detection_result)
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)

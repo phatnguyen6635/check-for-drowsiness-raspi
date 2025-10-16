@@ -8,11 +8,11 @@ sleep 5
 # Load Conda environment
 # ----------------------------
 
-source /home/jetson/miniconda3/etc/profile.d/conda.sh
+source /home/raspi/miniconda3/etc/profile.d/conda.sh
 conda activate check-for-drowsiness
 
 # ----------------------------
 # Run main Python script
 # ----------------------------
-cd /home/jetson/Documents/repo/check-for-drowsiness || exit
-python tools/main.py >> /home/jetson/start.log 2>&1
+cd /home/raspi/Documents/project/check-for-drowsiness-raspi || exit
+python tools/main.py

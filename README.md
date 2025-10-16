@@ -13,7 +13,7 @@
 
 This project focuses on detecting worker drowsiness during the final inspection stage of a manufacturing process. Using MediaPipe’s Face Landmarker with Blendshapes, the system extracts facial features — specifically the eye openness ratio — to estimate the worker’s level of alertness in real time.
 
-A custom logic module was implemented to analyze the degree of eye openness and determine drowsiness status. The solution is optimized and deployed on NVIDIA Jetson, enabling real-time monitoring with efficient on-edge inference.
+A custom logic module was implemented to analyze the degree of eye openness and determine drowsiness status. The solution is optimized and deployed on Raspberry Pi 4, enabling real-time monitoring with efficient on-edge inference.
 
 This project aims to improve workplace safety and productivity by providing an automated, lightweight, and deployable solution for human condition monitoring in industrial environments
 
@@ -29,6 +29,7 @@ This project aims to improve workplace safety and productivity by providing an a
 ├── README.md
 ├── requirements.txt
 ├── setup.py
+├── run.sh
 ├── src
 │   └── utils.py
 └── tools
@@ -41,7 +42,7 @@ This source directories are as follows:
 
 **Executable Files in `tools`:**
 
-- **`main.py`** - Run the project in real time on a Jetson device connected to a webcam.
+- **`run.sh`** - Run the project in real time on a Raspberry Pi 4 device connected to a webcam.
 
 **Source Directories:**
 
@@ -54,7 +55,7 @@ This source directories are as follows:
 
 1. Clone project repo
     ```
-    git clone git@github.com:HitechMVP/CheckForDrowsiness_MV.git
+    git clone git@github.com:HitechMVP/CheckForDrowsinessRaspi_MV.git
     ```
 
 2. Set up a virtual environment
@@ -76,13 +77,13 @@ This source directories are as follows:
 3. Install project dependencies
 
     ```
-    cd .\CheckForDrowsiness_MV\  
+    cd .\CheckForDrowsinessRaspi_MV\  
     pip install -e .
     ```
 
 ### Usage
 
-To inference model in realtime on Jetson
+To inference model in realtime on Rasberry Pi 4
 
 ```
 bash run.sh
