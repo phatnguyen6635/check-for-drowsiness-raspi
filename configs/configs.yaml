@@ -4,6 +4,3 @@ model_path: "./models/face_landmarker_v2_with_blendshapes.task"
 
 ### ALGORITHM ###
 blink_threshold: 0.4
-
-### JETSON ###
-buzzer_pin: 18

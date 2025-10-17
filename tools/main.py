@@ -7,41 +7,6 @@ from src.utils import CameraManager
 import os
 import sys
 import time
-
-try:
-    import RPi.GPIO as GPIO
-    RPI_AVAILABLE = True
-except ImportError:
-    GPIO = None
-    RPI_AVAILABLE = False
-
-
-def initialize_gpio(buzzer_pin, logger):
-    """Initialize GPIO with error handling"""
-    if not RPI_AVAILABLE:
-        logger.warning("RPi.GPIO not available. GPIO features disabled.")
-        return False
-    
-    try:
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(buzzer_pin, GPIO.OUT)
-        GPIO.output(buzzer_pin, GPIO.LOW)
-        logger.info(f"GPIO initialized on pin {buzzer_pin}")
-        return True
-    
-    except Exception as e:
-        logger.error(f"Failed to initialize GPIO: {e}")
-        return False
-    
-def set_buzzer(buzzer_pin, state, gpio_enabled, logger):
-    """Control buzzer with error handling"""
-    if not gpio_enabled:
-        return
-    
-    try:
-        GPIO.output(buzzer_pin, GPIO.HIGH if state else GPIO.LOW)
-    except Exception as e:
-        logger.error(f"GPIO output error: {e}")
         
 def cleanup_resources(cam, detector, buzzer_pin, gpio_enabled, logger):
     """Cleanup all resources safely"""
@@ -61,14 +26,6 @@ def cleanup_resources(cam, detector, buzzer_pin, gpio_enabled, logger):
         detector.close()
     except Exception as e:
         logger.error(f"Error closing detector: {e}")
-    
-    if gpio_enabled:
-        try:
-            GPIO.output(buzzer_pin, GPIO.LOW)
-            GPIO.cleanup()
-            logger.info("GPIO cleaned up")
-        except Exception as e:
-            logger.error(f"GPIO cleanup error: {e}")
 
 def main():
     """Main function with comprehensive error handling"""
@@ -89,14 +46,11 @@ def main():
         config = load_config()
         model_path = config['model_path']
         blink_threshold = config['blink_threshold']
-        buzzer_pin = config['buzzer_pin']
-        logger.info(f"Config loaded - Threshold: {blink_threshold}, Pin: {buzzer_pin}")
+        logger.info(f"Config loaded - Threshold: {blink_threshold}")
         
-        # Initialize GPIO
-        gpio_enabled = initialize_gpio(buzzer_pin, logger)
         
         # Initialize camera
-        cam = CameraManager(logger)
+        cam = CameraManager(logger, camera_index=0, width=1280, height=720, threaded=True, max_fps=0)
         
         if not cam.open():
             logger.error("Cannot open camera. Exiting.")
@@ -117,9 +71,10 @@ def main():
         while True:
             try:
                 # Read frame
-                frame = cam.read()
+                ret, frame = cam.read()
                 if frame is None:
                     logger.warning("Failed to read frame, skipping...")
+                    time.sleep(0.01)
                     continue
                                 
                 # Using mediapipe for face detection
@@ -157,14 +112,16 @@ def main():
                         delay_worker = time.time()
                     if count < 5 and time.time() - delay_worker > 2:
                         logger.info("No woker detected in the frame.")
-                        os.system("ffplay -nodisp -autoexitffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice1.m4a")
+                        os.system("ffplay -nodisp -autoexit -volume 100 /home/raspi/Documents/project/check-for-drowsiness-raspi/voice/voice1.wav")
+                        cam.flush(3)
                         count += 1
                         
                 if drowsy and not drowsy_pred:
                     delay_drowsy = time.time()
                 if drowsy and time.time() - delay_drowsy > 2:
                     logger.info("Worker is sleeping")
-                    os.system("ffplay -nodisp -autoexitffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice2.m4a")
+                    os.system("ffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice/voice2.wav")
+                    cam.flush(3)
                     
                 drowsy_pred = drowsy
                 worker_pred = worker
@@ -173,13 +130,15 @@ def main():
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                 
                 # Display frame
-                # cv2.imshow("Drowsiness Detection", display_frame)
+                cv2.imshow("Drowsiness Detection", display_frame)
                 
                 # Handle keyboard input
                 key = cv2.waitKey(5) & 0xFF
                 if key in [ord('q'), ord('Q'), 27]:
                     logger.info("User requested quit")
                     break
+                
+                time.sleep(0.1)
             
             except cv2.error as e:
                 logger.error(f"OpenCV error in loop: {e}")
@@ -208,7 +167,6 @@ def main():
         sys.exit(1)
     
     finally:
-        # Cleanup
         
         if cam and detector:
             cleanup_resources(cam, detector, 

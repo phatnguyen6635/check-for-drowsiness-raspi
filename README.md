@@ -24,16 +24,25 @@ This project aims to improve workplace safety and productivity by providing an a
 .
 ├── configs
 │   └── configs.yaml
-├── model
+├── docs
+│   └── mediapipe_face_landmarks.txt
+├── logs
+├── models
 │   └── face_landmarker_v2_with_blendshapes.task
 ├── README.md
 ├── requirements.txt
-├── setup.py
 ├── run.sh
+├── setup.py
 ├── src
+│   ├── __init__.py
 │   └── utils.py
-└── tools
-    └── main.py
+├── tools
+│   ├── logs
+│   │   └── app.log
+│   └── main.py
+└── voice
+    ├── voice1.wav
+    └── voice2.wav
 ```
 
 <img width="1297" height="590" alt="image" src="https://github.com/user-attachments/assets/fa74c9df-383d-4dac-9c97-3e4a7fb4252c" />
@@ -47,9 +56,12 @@ This source directories are as follows:
 **Source Directories:**
 
 - **configs** - Contains all model and algorithm configurations.
+- **docs** - Contains all related documents.
+- **log** - Contains log frpom the project.
 - **models** - Contains MediaPipe Tasks model package. 
 - **src** - Contains helper functions.
 - **tools** - Contains all needed scripts for run this project.
+- **voice** - Contains all voice files used in the project.
 
 ### Installation
 
