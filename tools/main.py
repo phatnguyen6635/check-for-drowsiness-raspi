@@ -4,8 +4,7 @@ from src.utils import (load_config, create_log, create_face_detector, draw_face_
                        render_blendshape_metrics, display_drowsiness_alert)
 from src.utils import CameraManager
 
-import yaml
-from yaml import Loader
+import os
 import sys
 import time
 
@@ -112,6 +111,9 @@ def main():
         logger.info("Starting detection loop. Press 'Q' or ESC to quit.")
         
         drowsy_pred = False
+        worker_pred = True
+        count = 0
+        
         while True:
             try:
                 # Read frame
@@ -120,7 +122,7 @@ def main():
                     logger.warning("Failed to read frame, skipping...")
                     continue
                                 
-                # Detect faces
+                # Using mediapipe for face detection
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 detection_result = detector.detect(mp_image)
@@ -128,8 +130,8 @@ def main():
                 # Process detection results
                 drowsy = False
                 
-                # Extract landmarks
-                if detection_result.face_blendshapes:
+                # Detect face
+                if detection_result.face_landmarks:
                     blendshapes = detection_result.face_blendshapes[0]
                     
                     # Render metrics and get blink scores
@@ -145,19 +147,27 @@ def main():
                         text_end_y,
                         blink_threshold
                     )
-                
-                # Control buzzer
-                if drowsy and not drowsy_pred:
-                    delay = time.time()
-                
-                if drowsy and time.time() - delay > 2:
-                    logger.info("Worker is sleeping")
-                    flag = True
+                    count = 0
+                    worker = True
+                    
                 else:
-                    flag = False
-                
+                    worker = False
+
+                    if worker_pred and not worker:
+                        delay_worker = time.time()
+                    if count < 5 and time.time() - delay_worker > 2:
+                        logger.info("No woker detected in the frame.")
+                        os.system("ffplay -nodisp -autoexitffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice1.m4a")
+                        count += 1
+                        
+                if drowsy and not drowsy_pred:
+                    delay_drowsy = time.time()
+                if drowsy and time.time() - delay_drowsy > 2:
+                    logger.info("Worker is sleeping")
+                    os.system("ffplay -nodisp -autoexitffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice2.m4a")
+                    
                 drowsy_pred = drowsy
-                set_buzzer(buzzer_pin, flag, gpio_enabled, logger)
+                worker_pred = worker
                 
                 annotated_frame = draw_face_landmarks(rgb, detection_result)
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)

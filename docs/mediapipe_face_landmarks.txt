@@ -1,0 +1,16 @@
+| Tên blendshape       | Ý nghĩa / biểu cảm mắt tương ứng                         |
+| -------------------- | -------------------------------------------------------- |
+| **eyeBlinkLeft**     | Mắt trái nhắm (blink) — độ “nhắm” của mắt trái.          |
+| **eyeBlinkRight**    | Mắt phải nhắm.                                           |
+| **eyeSquintLeft**    | Mắt trái “nheo” (squint) — như khi bạn nheo mắt nhìn rõ. |
+| **eyeSquintRight**   | Mắt phải nheo.                                           |
+| **eyeWideLeft**      | Mắt trái mở lớn (wide) — mở to mắt trái.                 |
+| **eyeWideRight**     | Mắt phải mở lớn.                                         |
+| **eyeLookUpLeft**    | Mắt trái nhìn lên (upward).                              |
+| **eyeLookUpRight**   | Mắt phải nhìn lên.                                       |
+| **eyeLookDownLeft**  | Mắt trái nhìn xuống (downward).                          |
+| **eyeLookDownRight** | Mắt phải nhìn xuống.                                     |
+| **eyeLookInLeft**    | Mắt trái nhìn vào trong (towards mũi / giữa).            |
+| **eyeLookInRight**   | Mắt phải nhìn vào trong (hướng vào giữa gương mặt).      |
+| **eyeLookOutLeft**   | Mắt trái nhìn ra ngoài (hướng ra phía tai).              |
+| **eyeLookOutRight**  | Mắt phải nhìn ra ngoài.                                  |
