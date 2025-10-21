@@ -7,8 +7,41 @@ from src.utils import CameraManager
 import os
 import sys
 import time
+
+try:
+    import RPi.GPIO as GPIO
+    RPI_AVAILABLE = True
+except ImportError:
+    GPIO = None
+    RPI_AVAILABLE = False
+
+def initialize_gpio(led_pin, logger):
+    """Initialize GPIO with error handling"""
+    if not RPI_AVAILABLE:
+        logger.warning("RPI.GPIO not available. GPIO features disabled.")
+        return False
+    
+    try:
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(led_pin, GPIO.OUT)
+        GPIO.output(led_pin, GPIO.LOW)
+        logger.info(f"GPIO initialized on pin {led_pin}")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Failed to initialize GPIO: {e}")
+        return False
+
+def set_led(led_pin, state, gpio_enabled, logger):
+    """Control led with error handling"""
+    if not gpio_enabled:
+        return
+    try:
+        GPIO.output(led_pin, GPIO.HIGH if state else GPIO.LOW)
+    except Exception as e:
+        logger.error(f"GPIO output error: {e}")
         
-def cleanup_resources(cam, detector, buzzer_pin, gpio_enabled, logger):
+def cleanup_resources(cam, detector, led_pin, gpio_enabled, logger):
     """Cleanup all resources safely"""
     logger.info("Cleaning up resources...")
     
@@ -26,6 +59,14 @@ def cleanup_resources(cam, detector, buzzer_pin, gpio_enabled, logger):
         detector.close()
     except Exception as e:
         logger.error(f"Error closing detector: {e}")
+    
+    if gpio_enabled:
+        try:
+            GPIO.output(led_pin, GPIO.LOW)
+            GPIO.cleanup()
+            logger.info("GPIO cleaned up")
+        except Exception as e:
+            logger.error(f"GPIO cleanup error: {e}")
 
 def main():
     """Main function with comprehensive error handling"""
@@ -46,7 +87,8 @@ def main():
         config = load_config()
         model_path = config['model_path']
         blink_threshold = config['blink_threshold']
-        logger.info(f"Config loaded - Threshold: {blink_threshold}")
+        led_pin = config['led_pin']
+        logger.info(f"Config loaded - Threshold: {blink_threshold} ; Led pin {led_pin}")
         
         
         # Initialize camera
@@ -66,6 +108,7 @@ def main():
         
         drowsy_pred = False
         worker_pred = True
+        count = 0
         count = 0
         
         while True:
@@ -110,9 +153,12 @@ def main():
 
                     if worker_pred and not worker:
                         delay_worker = time.time()
-                    if count < 5 and time.time() - delay_worker > 2:
+                    if count < 5 and time.time() - delay_worker > 1.5:
+                        set_led(led_pin, True, gpio_enabled, logger)
                         logger.info("No woker detected in the frame.")
-                        os.system("ffplay -nodisp -autoexit -volume 100 /home/raspi/Documents/project/check-for-drowsiness-raspi/voice/voice1.wav")
+                        # os.system("ffplay -nodisp -autoexit -volume 100 /home/pi/Documents/project/check-for-drowsiness-raspi/voice/voice1.wav")
+                        time.sleep(2)
+                        set_led(led_pin, False, gpio_enabled, logger)
                         cam.flush(3)
                         count += 1
                         
@@ -120,7 +166,9 @@ def main():
                     delay_drowsy = time.time()
                 if drowsy and time.time() - delay_drowsy > 2:
                     logger.info("Worker is sleeping")
-                    os.system("ffplay -nodisp -autoexit /home/raspi/Documents/project/check-for-drowsiness-raspi/voice/voice2.wav")
+                    set_led(led_pin, True, gpio_enabled, logger)
+                    os.system("ffplay -nodisp -autoexit /home/pi/Documents/project/check-for-drowsiness-raspi/voice/voice2.wav")
+                    set_led(led_pin, False, gpio_enabled, logger)
                     cam.flush(3)
                     
                 drowsy_pred = drowsy
@@ -139,6 +187,7 @@ def main():
                     break
                 
                 time.sleep(0.1)
+                
             
             except cv2.error as e:
                 logger.error(f"OpenCV error in loop: {e}")
@@ -170,7 +219,7 @@ def main():
         
         if cam and detector:
             cleanup_resources(cam, detector, 
-                            config['buzzer_pin'] if config else 0, 
+                            config['led_pin'] if config else 0, 
                             gpio_enabled, logger or create_log())
         if logger:
             logger.info("=" * 60)
