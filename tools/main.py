@@ -1,72 +1,16 @@
 import cv2
 import mediapipe as mp
-from src.utils import (load_config, create_log, create_face_detector, draw_face_landmarks,
-                       render_blendshape_metrics, display_drowsiness_alert)
-from src.utils import CameraManager
 
-import os
+from src.camera import CameraManager
+from src.logger import create_log
+from src.utils import (load_config, initialize_gpio, set_led, cleanup_resources)
+from src.models import (create_face_detector, draw_face_landmarks, render_blendshape_metrics,
+                        calculate_gaze_direction, draw_gaze_arrows, display_drowsiness_alert,
+                        display_time_info)
+
 import sys
 import time
 
-try:
-    import RPi.GPIO as GPIO
-    RPI_AVAILABLE = True
-except ImportError:
-    GPIO = None
-    RPI_AVAILABLE = False
-
-def initialize_gpio(led_pin, logger):
-    """Initialize GPIO with error handling"""
-    if not RPI_AVAILABLE:
-        logger.warning("RPI.GPIO not available. GPIO features disabled.")
-        return False
-    
-    try:
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(led_pin, GPIO.OUT)
-        GPIO.output(led_pin, GPIO.LOW)
-        logger.info(f"GPIO initialized on pin {led_pin}")
-        return True
-    
-    except Exception as e:
-        logger.error(f"Failed to initialize GPIO: {e}")
-        return False
-
-def set_led(led_pin, state, gpio_enabled, logger):
-    """Control led with error handling"""
-    if not gpio_enabled:
-        return
-    try:
-        GPIO.output(led_pin, GPIO.HIGH if state else GPIO.LOW)
-    except Exception as e:
-        logger.error(f"GPIO output error: {e}")
-        
-def cleanup_resources(cam, detector, led_pin, gpio_enabled, logger):
-    """Cleanup all resources safely"""
-    logger.info("Cleaning up resources...")
-    
-    try:
-        cam.close()
-    except Exception as e:
-        logger.error(f"Error closing camera: {e}")
-    
-    try:
-        cv2.destroyAllWindows()
-    except Exception as e:
-        logger.error(f"Error destroying windows: {e}")
-    
-    try:
-        detector.close()
-    except Exception as e:
-        logger.error(f"Error closing detector: {e}")
-    
-    if gpio_enabled:
-        try:
-            GPIO.output(led_pin, GPIO.LOW)
-            GPIO.cleanup()
-            logger.info("GPIO cleaned up")
-        except Exception as e:
-            logger.error(f"GPIO cleanup error: {e}")
 
 def main():
     """Main function with comprehensive error handling"""
@@ -75,6 +19,14 @@ def main():
     detector = None
     gpio_enabled = False
     config = None
+    
+    # Shared state for async callback
+    latest_result = {'detection': None, 'timestamp': 0}
+    
+    def result_callback(result, output_image, timestamp_ms: int):
+        """Callback for async detection results"""
+        latest_result['detection'] = result
+        latest_result['timestamp'] = timestamp_ms
     
     try:
         # Initialize logger
@@ -86,13 +38,15 @@ def main():
         # Load configuration
         config = load_config()
         model_path = config['model_path']
-        blink_threshold = config['blink_threshold']
+        blink_threshold = config['blink_threshold_wo_pitch']
         led_pin = config['led_pin']
         logger.info(f"Config loaded - Threshold: {blink_threshold} ; Led pin {led_pin}")
         
+        # Initialize GPIO
+        gpio_enabled = initialize_gpio(led_pin, logger)
         
         # Initialize camera
-        cam = CameraManager(logger, camera_index=0, width=1280, height=720, threaded=True, max_fps=0)
+        cam = CameraManager(logger, width=1280, height=720, threaded=True, max_fps=0)
         
         if not cam.open():
             logger.error("Cannot open camera. Exiting.")
@@ -100,16 +54,22 @@ def main():
         
         logger.info("Camera opened successfully")
         
-        # Initialize face detector
-        detector = create_face_detector(model_path, logger)
+        # Initialize face detector with callback
+        detector = create_face_detector(model_path, config, logger, result_callback)
+        
+        # Initialize video recorder
+        logger.info("Video recorder initialized")
         
         # Main loop
         logger.info("Starting detection loop. Press 'Q' or ESC to quit.")
         
+        # State variables
         drowsy_pred = False
         worker_pred = True
-        count = 0
-        count = 0
+        no_worker_count = 0
+        frame_id = 0
+        delay_worker = None
+        delay_drowsy = None
         
         while True:
             try:
@@ -119,17 +79,30 @@ def main():
                     logger.warning("Failed to read frame, skipping...")
                     time.sleep(0.01)
                     continue
-                                
-                # Using mediapipe for face detection
+                
+                # Crop frame
+                frame = frame[90:640, 0:800]
+                
+                # Convert to RGB for mediapipe
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                detection_result = detector.detect(mp_image)
+                frame_id += 1
+
+                # Send frame for async detection
+                detector.detect_async(mp_image, frame_id)
+                
+                # Get latest detection result from callback
+                detection_result = latest_result['detection']
+                print(detection_result)
+                
                 
                 # Process detection results
                 drowsy = False
+                worker = False
                 
                 # Detect face
-                if detection_result.face_landmarks:
+                if detection_result and detection_result.face_landmarks:
+                    worker = True
                     blendshapes = detection_result.face_blendshapes[0]
                     
                     # Render metrics and get blink scores
@@ -137,44 +110,63 @@ def main():
                         rgb, blendshapes
                     )
                     
-                    # Display drowsiness alerts
-                    drowsy = display_drowsiness_alert(
+                    # Check drowsiness
+                    drowsy = (blink_scores["left"] > blink_threshold and 
+                             blink_scores["right"] > blink_threshold)
+                    
+                    # Display drowsiness alert on frame
+                    rgb = display_drowsiness_alert(
                         rgb, 
                         blink_scores["left"], 
                         blink_scores["right"],
                         text_end_y,
                         blink_threshold
                     )
-                    count = 0
-                    worker = True
                     
-                else:
-                    worker = False
-
+                    # Reset no worker count
+                    no_worker_count = 0
+                
+                # Handle no worker detection
+                if not worker:
+                    # Start timer when worker disappears
                     if worker_pred and not worker:
                         delay_worker = time.time()
-                    if count < 5 and time.time() - delay_worker > 1.5:
-                        set_led(led_pin, True, gpio_enabled, logger)
-                        logger.info("No woker detected in the frame.")
-                        # os.system("ffplay -nodisp -autoexit -volume 100 /home/pi/Documents/project/check-for-drowsiness-raspi/voice/voice1.wav")
-                        time.sleep(2)
-                        set_led(led_pin, False, gpio_enabled, logger)
-                        cam.flush(3)
-                        count += 1
-                        
-                if drowsy and not drowsy_pred:
-                    delay_drowsy = time.time()
-                if drowsy and time.time() - delay_drowsy > 2:
-                    logger.info("Worker is sleeping")
-                    set_led(led_pin, True, gpio_enabled, logger)
-                    os.system("ffplay -nodisp -autoexit /home/pi/Documents/project/check-for-drowsiness-raspi/voice/voice2.wav")
-                    set_led(led_pin, False, gpio_enabled, logger)
-                    cam.flush(3)
                     
+                    # Alert if no worker for > 1.5 seconds
+                    if delay_worker and time.time() - delay_worker > 1.5:
+                        if no_worker_count < 5:
+                            logger.info("No worker detected in the frame.")
+                            no_worker_count += 1
+                
+                # Handle drowsiness detection
+                if drowsy:
+                    # Start timer when drowsiness begins
+                    if not drowsy_pred:
+                        delay_drowsy = time.time()
+                    
+                    # Alert if drowsy for > 2 seconds
+                    if delay_drowsy and time.time() - delay_drowsy > 2:
+                        logger.info("Worker is drowsy - ALERT!")
+                        set_led(led_pin, True, gpio_enabled, logger)
+                        cam.flush(3)
+                    else:
+                        set_led(led_pin, False, gpio_enabled, logger)
+                else:
+                    # Turn off LED when not drowsy
+                    set_led(led_pin, False, gpio_enabled, logger)
+                    delay_drowsy = None  # Reset drowsy timer
+                
+                # Update previous states
                 drowsy_pred = drowsy
                 worker_pred = worker
                 
-                annotated_frame = draw_face_landmarks(rgb, detection_result)
+                # Draw face landmarks (only if we have results)
+                if detection_result.face_landmarks:
+                    annotated_frame = draw_face_landmarks(rgb, detection_result)
+                else:
+                    annotated_frame = rgb
+                
+                # Convert back to BGR for display
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                 
                 # Display frame
@@ -188,7 +180,6 @@ def main():
                 
                 time.sleep(0.1)
                 
-            
             except cv2.error as e:
                 logger.error(f"OpenCV error in loop: {e}")
                 continue
@@ -216,7 +207,6 @@ def main():
         sys.exit(1)
     
     finally:
-        
         if cam and detector:
             cleanup_resources(cam, detector, 
                             config['led_pin'] if config else 0, 
@@ -225,6 +215,7 @@ def main():
             logger.info("=" * 60)
             logger.info("PROGRAM TERMINATED")
             logger.info("=" * 60)
+
 
 if __name__ == "__main__":
     main()
