@@ -1,136 +1,183 @@
 import time
 import cv2
 import threading
+from collections import deque
+from typing import Optional, Tuple
+import numpy as np
+import platform
+import os
 
 class CameraManager:
-    def __init__(self, logger, width=1280, height=720, threaded=True, max_fps=0):
+    """
+    Webcam-only Camera Manager (USB Camera).
+    - Optimized for Windows (CAP_DSHOW) and Linux (CAP_V4L2/DShow).
+    - Auto-reconnect, FPS limit, thread-safe.
+    - No Raspberry Pi, no picamera2.
+    """
+
+    def __init__(
+        self,
+        logger,
+        configs: Optional[dict],
+        threaded: bool = True,
+        buffer_size: int = 1,
+    ):
         self.logger = logger
-        self.width = width
-        self.height = height
+        self.width = configs["frame_width"]
+        self.height = configs["frame_height"]
+        self.threaded = threaded
+        self.max_fps = configs["frame_rate"]
+        self.buffer_size = max(1, buffer_size)
 
-        # Threaded reader state
-        self.threaded = bool(threaded)
-        self.max_fps = float(max_fps) if max_fps is not None else 0.0
-        self._stop_event = None
-        self._thread = None
+        # Detect OS
+        self.is_windows = os.name == "nt"
+
+        # Thread state
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._latest_frame = None
-        self._latest_ret = False
-        self._frame_counter = 0
-        self._last_read_time = 0.0
-        
-        self.cap = self.get_real_camera()
 
+        # Frame state
+        self._latest_frame: Optional[np.ndarray] = None
+        self._latest_ret: bool = False
+        self._frame_counter: int = 0
+        self._last_read_time: float = 0.0
+        self._fps_timestamps = deque(maxlen=10)
 
-    def get_real_camera(self):
-        for i in range(20):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    self.logger.info(f"Using camera at index {i}")
-                    return cap
-            cap.release()
-        self.logger.error("Cannot find any camera")
-        return None
+        # OpenCV capture
+        self.cap: Optional[cv2.VideoCapture] = None
 
-    def open(self):
-        
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self.logger and self.logger.info(f"Camera is ready ({self.width}x{self.height}).")
+        self._initialize_camera()
+
+    def _initialize_camera(self) -> bool:
+        """Open webcam with best backend for OS."""
+        backend = cv2.CAP_DSHOW if self.is_windows else cv2.CAP_V4L2
+        indices = [0, 1, 2, -1]  # Try common indices
+
+        for idx in indices:
+            cap = cv2.VideoCapture(idx, backend)
+            if not cap.isOpened():
+                continue
+
+            # Test read
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                cap.release()
+                continue
+
+            # Apply settings
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+
+            # Verify
+            actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            self.logger.info(f"Webcam opened: index={idx}, {actual_w}x{actual_h}, backend={'DSHOW' if self.is_windows else 'V4L2'}")
+
+            self.cap = cap
+            return True
+
+        self.logger.error("No webcam found.")
+        return False
+
+    def open(self) -> bool:
+        if not self.cap:
+            if not self._initialize_camera():
+                return False
 
         if self.threaded:
             self._start_thread()
 
+        self.logger.info("Webcam ready.")
         return True
 
-    def _start_thread(self):
+    def _start_thread(self) -> None:
         if self._thread and self._thread.is_alive():
             return
 
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._update_loop, daemon=True, name="CameraManagerReader")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._update_loop, daemon=True, name="WebcamReader")
         self._thread.start()
-        self.logger and self.logger.info("Camera background reader started.")
+        self.logger.info("Webcam background thread started.")
 
-    def _update_loop(self):
-        sleep_interval = 1.0 / self.max_fps if (self.max_fps and self.max_fps > 0) else 0
-        while not (self._stop_event and self._stop_event.is_set()):
-            try:
+    def _update_loop(self) -> None:
+        min_interval = 1.0 / self.max_fps if self.max_fps > 0 else 0.0
+        last_time = time.time()
+
+        while not self._stop_event.is_set():
+            now = time.time()
+            elapsed = now - last_time
+
+            if min_interval == 0 or elapsed >= min_interval:
+                if not self.cap or not self.cap.isOpened():
+                    if not self._reconnect():
+                        time.sleep(1)
+                    continue
+
                 ret, frame = self.cap.read()
-                if not ret:
-                    pass
+                if ret and frame is not None:
+                    with self._lock:
+                        self._latest_frame = frame
+                        self._latest_ret = True
+                        self._frame_counter += 1
+                        self._last_read_time = now
+                        self._fps_timestamps.append(now)
+                    last_time = now
+                else:
+                    self.logger.warning("Frame dropped. Reconnecting...")
+                    self._reconnect()
+            else:
+                time.sleep(max(0, min_interval - elapsed))
 
-                with self._lock:
-                    self._latest_frame = frame
-                    self._latest_ret = bool(ret)
-                    self._frame_counter += 1
-                    self._last_read_time = time.time()
+    def _reconnect(self) -> bool:
+        """Reconnect to webcam."""
+        self.logger.warning("Reconnecting to webcam...")
+        if self.cap:
+            self.cap.release()
+        time.sleep(0.5)
+        return self._initialize_camera()
 
-            except Exception as e:
-                if self.logger:
-                    self.logger.exception(f"Camera background read error: {e}")
-            if sleep_interval:
-                time.sleep(sleep_interval)
-
-    def read(self):
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         if self.threaded:
             with self._lock:
-                return self._latest_ret, self._latest_frame
+                return self._latest_ret, self._latest_frame.copy() if self._latest_frame is not None else None
         else:
-            if not self.cap:
-                self.logger and self.logger.warning("Camera is not open.")
+            if not self.cap or not self.cap.isOpened():
                 return False, None
-            try:
-                ret, frame = self.cap.read()
-                if not ret:
-                    self.logger and self.logger.error("Unable to read frame from camera.")
-                    return False, None
-                return True, frame
-            except Exception as e:
-                self.logger and self.logger.error(f"Error reading frame: {e}")
-                return False, None
+            return self.cap.read()
 
-    def flush(self, n=3, timeout=1.0):
-        if not self.threaded:
-            last_ret, last_frame = False, None
-            t0 = time.time()
-            for _ in range(n):
-                if time.time() - t0 > timeout:
-                    break
-                last_ret, last_frame = self.read()
-            return last_ret, last_frame
+    def get_fps(self) -> float:
+        if len(self._fps_timestamps) < 2:
+            return 0.0
+        elapsed = self._fps_timestamps[-1] - self._fps_timestamps[0]
+        return (len(self._fps_timestamps) - 1) / max(elapsed, 1e-6)
 
+    def is_healthy(self, timeout: float = 2.0) -> bool:
+        return self._latest_ret and (time.time() - self._last_read_time < timeout)
+
+    def flush(self, n: int = 3, timeout: float = 1.0) -> Tuple[bool, Optional[np.ndarray]]:
         start = self._frame_counter
         t0 = time.time()
-        while (self._frame_counter - start) < n and (time.time() - t0) < timeout:
-            time.sleep(0.005)
-        with self._lock:
-            return self._latest_ret, self._latest_frame
+        while self._frame_counter - start < n and time.time() - t0 < timeout:
+            time.sleep(0.001)
+        return self.read()
 
-    def is_opened(self):
-        return self.cap is not None and self.cap.isOpened()
-
-    def close(self, join_timeout=1.0):
+    def close(self, join_timeout: float = 1.0) -> None:
         if self.threaded and self._stop_event:
             self._stop_event.set()
             if self._thread:
                 self._thread.join(timeout=join_timeout)
-            self.logger and self.logger.info("Camera background reader stopped.")
+            self.logger.info("Webcam thread stopped.")
 
         if self.cap:
-            try:
-                self.cap.release()
-                self.logger and self.logger.info("Camera connection closed.")
-            except Exception as e:
-                self.logger and self.logger.error(f"Error releasing camera: {e}")
+            self.cap.release()
+            self.logger.info("Webcam released.")
+
         with self._lock:
             self._latest_frame = None
             self._latest_ret = False
             self._frame_counter = 0
-            self._last_read_time = 0.0
-    
-    
-    def get_fps(self):
-        return self._frame_counter / (time.time() - self._last_read_time + 1e-6)
+            self._fps_timestamps.clear()
+
+        self.logger.info("CameraManager closed.")

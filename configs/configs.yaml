@@ -3,7 +3,7 @@
 model_path: "./models/face_landmarker_v2_with_blendshapes.task"
 
 ### ALGORITHM ###
-num_faces: 2
+num_faces: 1
 min_face_detection_confidence: 0.4
 min_face_presence_confidence: 0.6
 blink_threshold_pitch: 0.7
