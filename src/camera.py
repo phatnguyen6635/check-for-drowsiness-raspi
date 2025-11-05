@@ -117,6 +117,7 @@ class CameraManager:
 
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
+                    frame = frame[90:740, 0:800]
                     with self._lock:
                         self._latest_frame = frame
                         self._latest_ret = True

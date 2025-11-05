@@ -3,6 +3,8 @@ from pathlib import Path
 import yaml
 from yaml import Loader
 from pathlib import Path
+import time
+import threading
 
 try:
     import RPi.GPIO as GPIO
@@ -51,14 +53,18 @@ def initialize_gpio(led_pin, logger):
         logger.error(f"Failed to initialize GPIO: {e}")
         return False
 
-def set_led(led_pin, state, gpio_enabled, logger):
-    """Control led with error handling"""
+def flash_led(led_pin, gpio_enabled, logger, duration=2):
+    """Flash LED for a duration (non-blocking)."""
     if not gpio_enabled:
         return
-    try:
-        GPIO.output(led_pin, GPIO.HIGH if state else GPIO.LOW)
-    except Exception as e:
-        logger.error(f"GPIO output error: {e}")
+    def _blink():
+        try:
+            GPIO.output(led_pin, GPIO.HIGH)
+            time.sleep(duration)
+            GPIO.output(led_pin, GPIO.LOW)
+        except Exception as e:
+            logger.error(f"GPIO blink error: {e}")
+    threading.Thread(target=_blink, daemon=True).start()
         
 def cleanup_resources(cam, detector, led_pin, gpio_enabled, logger):
     """Cleanup all resources safely"""

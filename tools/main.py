@@ -9,7 +9,7 @@ from collections import deque
 
 from src.logger import create_log, save_suspected_frame
 from src.camera import CameraManager
-from src.utils import load_config, initialize_gpio, set_led, cleanup_resources
+from src.utils import load_config, initialize_gpio, flash_led, cleanup_resources
 from src.models import (
     create_face_detector,
     draw_face_landmarks,
@@ -203,8 +203,7 @@ def display_and_process(
                         annotated_frame=annotated_frame,
                     )
                 
-                
-                set_led(led_pin, is_alert, gpio_enabled, logger)
+                    flash_led(led_pin, gpio_enabled, logger)
                 
             else:
                 annotated_frame = frame_rgb
