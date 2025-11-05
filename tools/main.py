@@ -5,8 +5,9 @@ import queue
 import time
 import sys
 from typing import Optional
+from collections import deque
 
-from src.logger import create_log
+from src.logger import create_log, save_suspected_frame
 from src.camera import CameraManager
 from src.utils import load_config, initialize_gpio, set_led, cleanup_resources
 from src.models import (
@@ -102,12 +103,21 @@ def display_and_process(
     logger.info("Display & logic loop started.")
 
     # State tracking
-    delay_worker: Optional[float] = None
-    delay_drowsy: Optional[float] = None
     blink_threshold_wo_pitch = configs["blink_threshold_wo_pitch"]
     blink_threshold_pitch = configs["blink_threshold_pitch"]
     
+    pitch_threshold_positive = configs["pitch_threshold_positive"]
+    pitch_threshold_negative = configs["pitch_threshold_negative"]
+    delay_drowsy_threshold = configs["delay_drowsy_threshold"]
+    
+    perclos_window_size = configs["perclos_window_size"]
+    perclos_threshold = configs["perclos_threshold"]
+
+    drowsy_prev = False
+    delay_drowsy = None
     processed_frames = 0
+    eye_closed_history = deque(maxlen=perclos_window_size)
+
 
     while not stop_event.is_set():
         try:
@@ -119,15 +129,10 @@ def display_and_process(
                 continue
 
             processed_frames += 1
-            
-            # === DRAW LANDMARKS ===
-            if detection_result and detection_result.face_landmarks:
-                annotated_frame = draw_face_landmarks(frame_rgb, detection_result)
-            else:
-                annotated_frame = frame_rgb
                 
-            # === FACE DETECTION & BLINK ANALYSIS ===
             if detection_result and detection_result.face_landmarks:
+                
+                # === FACE DETECTION & BLINK ANALYSIS ===
                 blendshapes = detection_result.face_blendshapes[0]
                 face_landmarks = detection_result.face_landmarks[0]
                 
@@ -149,34 +154,63 @@ def display_and_process(
                     text_end_y,
                     blink_threshold_wo_pitch,
                 )
-                if detection_result.facial_transformation_matrixes:
-                    head_orientation = get_head_orientation(detection_result.facial_transformation_matrixes[0])
-                    annotated_frame = display_head_orientation(annotated_frame, head_orientation)
+                head_orientation = get_head_orientation(detection_result.facial_transformation_matrixes[0])
+                annotated_frame = display_head_orientation(annotated_frame, head_orientation)
+                
+                # === DROWSINESS ALERT LOGIC ===
+                
+                is_alert = False
+                
+                # Logic 1: Pitch-based method
+                pitch = head_orientation["pitch"]
+                blink_threshold = (blink_threshold_wo_pitch 
+                                if pitch_threshold_negative < pitch < pitch_threshold_positive 
+                                else blink_threshold_pitch)
+                
+                # Logic 2: EAR-based method
+                drowsy = (blink_scores["left"] > blink_threshold and 
+                        blink_scores["right"] > blink_threshold)
+                
+                # Track drowsiness timing
+                if drowsy:
+                    if not drowsy_prev:
+                        delay_drowsy = time.time()
                     
+                    # Check if drowsy long enough
+                    elapsed = time.time() - delay_drowsy
+                    is_alert = elapsed > delay_drowsy_threshold
+                else:
+                    delay_drowsy = None  # Reset
+                
+                drowsy_prev = drowsy
+
+                # Logic 3: Perclos-based method
+                
+                eye_closed_history.append(drowsy)
+                if len(eye_closed_history) > 0:
+                    perclos = sum(eye_closed_history) / len(eye_closed_history)
+                else:
+                    perclos = 0
+                if perclos >= perclos_threshold:
+                    is_alert = True
                     
-            
+                if is_alert:
+                    logger.warning("OPERATOR IS DROWSY - ALERT!")
+                    
+                    # Save suspected drowsy frame
+                    save_suspected_frame(
+                        origin_frame=display_info(cv2.flip(frame_rgb, 1), cam.get_fps()),
+                        annotated_frame=annotated_frame,
+                    )
+                
+                
+                set_led(led_pin, is_alert, gpio_enabled, logger)
+                
             else:
                 annotated_frame = frame_rgb
                 annotated_frame = cv2.flip(annotated_frame, 1)
                 annotated_frame = display_info(annotated_frame, cam.get_fps())
-
-            # # === DROWSINESS ALERT LOGIC ===
-            # Logic 1: Perclos
-            # Logic 2: EAR
-            # Logic 3: Pitch + EAR
-            # if drowsy:
-            #     if not drowsy_prev:
-            #         delay_drowsy = time.time()
-            #     if delay_drowsy and time.time() - delay_drowsy > 2.0:
-            #         logger.warning("WORKER IS DROWSY - ALERT!")
-            #         set_led(led_pin, True, gpio_enabled, logger)
-            #         cam.flush(3)  # Clear camera buffer
-            #     else:
-            #         set_led(led_pin, False, gpio_enabled, logger)
-            # else:
-            #     set_led(led_pin, False, gpio_enabled, logger)
-            #     delay_drowsy = None
-
+            
             # === DISPLAY FRAME ===
             display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
             cv2.imshow("Drowsiness Detection", display_frame)

@@ -2,12 +2,19 @@
 ### MODEL ###
 model_path: "./models/face_landmarker_v2_with_blendshapes.task"
 
-### ALGORITHM ###
+### ALGORITHM FACE DETECTION ###
 num_faces: 1
 min_face_detection_confidence: 0.4
 min_face_presence_confidence: 0.6
 blink_threshold_pitch: 0.7
 blink_threshold_wo_pitch: 0.4
+
+### ALGORITHM DROWSINESS DETECTION ###
+pitch_threshold_positive: 40
+pitch_threshold_negative: -20
+delay_drowsy_threshold: 2.0
+perclos_window_size: 100
+perclos_threshold: 0.25
 
 ### CAMERA ###
 camera_id: 0

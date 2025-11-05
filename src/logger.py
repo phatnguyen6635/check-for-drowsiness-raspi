@@ -1,10 +1,11 @@
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
+import cv2
 import os
+from datetime import datetime
 
-
-def create_log(log_file: str = "./logs/app.log", backup_days: int = 30) -> logging.Logger:
+def create_log(log_file: str = "./logs/log_app/app.log", backup_days: int = 30) -> logging.Logger:
     """
     Create logger to rotate files by day, automatically delete old logs after backup_days days.
     Args:
@@ -46,3 +47,22 @@ def create_log(log_file: str = "./logs/app.log", backup_days: int = 30) -> loggi
 
     return logger
  
+def save_suspected_frame(origin_frame, annotated_frame, save_dir="./logs/log_frame"):
+    """
+    Save the current frame as an image file in the specified directory.
+    
+    Args:
+        frame: Image frame to save
+        save_dir: Directory to save the image file
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    file_path_origin = os.path.join(save_dir, f"suspected_origin_{timestamp}.jpg")
+    file_path_annotated = os.path.join(save_dir, f"suspected_annotated_{timestamp}.jpg")
+    
+    origin_frame = cv2.cvtColor(origin_frame, cv2.COLOR_RGB2BGR)
+    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
+    
+    cv2.imwrite(file_path_origin, origin_frame)
+    cv2.imwrite(file_path_annotated, annotated_frame)
