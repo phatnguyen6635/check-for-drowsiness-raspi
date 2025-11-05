@@ -117,17 +117,31 @@ def display_and_process(
     delay_drowsy = None
     processed_frames = 0
     eye_closed_history = deque(maxlen=perclos_window_size)
-
+    no_result_counter = 0
+    max_no_result = 30
+    
 
     while not stop_event.is_set():
         try:
+            
             # Get latest detection result
-            try:
-                frame_rgb, detection_result, _ = result_queue.get_nowait()
-            except queue.Empty:
-                time.sleep(0.001)
-                continue
-
+            has_new_result = False
+            while not result_queue.empty():
+                try:
+                    last_frame_rgb, last_detection, _ = result_queue.get_nowait()
+                    has_new_result = True
+                    no_result_counter = 0
+                except queue.Empty:
+                    break
+            
+            if not has_new_result:
+                no_result_counter += 1
+                if no_result_counter > max_no_result:
+                    logger.warning("No detection results for too long. Check camera.")
+                    continue
+                
+            frame_rgb = last_frame_rgb
+            detection_result = last_detection
             processed_frames += 1
                 
             if detection_result and detection_result.face_landmarks:
