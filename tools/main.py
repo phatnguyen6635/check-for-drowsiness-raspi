@@ -219,6 +219,7 @@ def display_and_process(
                 # PERCLOS
                 eye_closed_history.append(drowsy)
                 perclos = sum(eye_closed_history) / len(eye_closed_history) if eye_closed_history else 0
+                print(f"PERCLOS: {perclos:.2f}")
                 
                 if perclos >= perclos_threshold:
                     is_alert = True

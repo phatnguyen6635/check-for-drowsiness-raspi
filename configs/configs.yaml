@@ -14,7 +14,7 @@ pitch_threshold_positive: 40
 pitch_threshold_negative: -20
 delay_drowsy_threshold: 2.0
 perclos_window_size: 100
-perclos_threshold: 0.25
+perclos_threshold: 0.5
 
 ### CAMERA ###
 camera_id: 0
