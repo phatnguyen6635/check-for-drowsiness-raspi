@@ -1,3 +1,11 @@
+
+# threadflow.py (deque-based pipeline)
+"""
+Reworked threadflow: camera writes latest frame into an internal deque (maxlen=1).
+MediaPipeProcessor reads the latest frame (no backlog) and calls detector.detect_async.
+Results are expected to be pushed into a result_deque (shared by main) via the detector callback.
+"""
+
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -7,7 +15,6 @@ import threading
 from collections import deque
 from typing import Optional, Tuple
 from enum import Enum
-import queue
 import os
 from dataclasses import dataclass
 
@@ -21,7 +28,6 @@ class SystemState(Enum):
 
 @dataclass
 class CameraFrame:
-    """Thread-safe camera frame wrapper"""
     frame: np.ndarray
     timestamp: float
     counter: int
@@ -29,7 +35,7 @@ class CameraFrame:
 
 class CameraManager:
     """
-    Thread-safe webcam manager - OPTIMIZED FOR PI4
+    Thread-safe webcam manager that keeps only the latest frame in a deque (maxlen=1).
     """
 
     def __init__(self, logger, configs: dict, buffer_size: int = 2):
@@ -46,21 +52,18 @@ class CameraManager:
         self._thread: Optional[threading.Thread] = None
         self._ready_event = threading.Event()
 
-        # Frame state (protected by lock)
-        self._latest_frame: Optional[CameraFrame] = None
+        # Keep latest frame in a deque (maxlen=1) to enforce latest-only semantics
+        self.cam_deque: deque = deque(maxlen=3)
         self._frame_counter: int = 0
-        
-        # OPTIMIZATION: Reduce FPS tracking samples
-        self._fps_timestamps = deque(maxlen=15)  # Changed from 30
-        self._last_error_time: float = 0
-        self._error_count: int = 0
+
+        # FPS tracking
+        self._fps_timestamps = deque(maxlen=15)
 
         # OpenCV capture
         self.cap: Optional[cv2.VideoCapture] = None
         self._state = SystemState.INITIALIZING
 
     def _initialize_camera(self) -> bool:
-        """Open webcam with best backend for OS."""
         backend = cv2.CAP_DSHOW if self.is_windows else cv2.CAP_V4L2
 
         for idx in range(20):
@@ -74,25 +77,22 @@ class CameraManager:
                 cap.release()
                 continue
 
-            # Apply settings - OPTIMIZED FOR PI
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-            
-            # PI OPTIMIZATION: Disable auto-focus and white balance
+
             try:
                 cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
                 cap.set(cv2.CAP_PROP_AUTO_WB, 0)
-            except:
+            except Exception:
                 pass
 
-            # Verify
             actual_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             actual_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             actual_fps = cap.get(cv2.CAP_PROP_FPS)
-            
+
             self.logger.info(
                 f"Camera opened: index={idx}, {int(actual_w)}x{int(actual_h)}, "
                 f"FPS={actual_fps}, backend={'DSHOW' if self.is_windows else 'V4L2'}"
@@ -105,7 +105,6 @@ class CameraManager:
         return False
 
     def open(self) -> bool:
-        """Start camera with background thread"""
         if not self._initialize_camera():
             return False
 
@@ -114,7 +113,7 @@ class CameraManager:
             target=self._capture_loop,
             daemon=True,
             name="CameraCapture"
-            )
+        )
         self._thread.start()
 
         if self._ready_event.wait(timeout=5.0):
@@ -125,16 +124,13 @@ class CameraManager:
             return False
 
     def _capture_loop(self) -> None:
-        """Main capture loop - OPTIMIZED FOR PI4"""
+        """Capture loop that always keeps only the newest frame in cam_deque."""
         consecutive_errors = 0
         max_consecutive_errors = 10
-        
-        # OPTIMIZATION: Remove capture_times tracking
         last_diagnostic = time.time()
 
         while not self._stop_event.is_set():
             try:
-                # Check camera health
                 if not self.cap or not self.cap.isOpened():
                     if not self._reconnect():
                         time.sleep(1)
@@ -145,41 +141,30 @@ class CameraManager:
                             break
                         continue
 
-                # Use grab() for fastest capture
-                grabbed = self.cap.grab()
-                
-                if not grabbed:
+                # Use read() (grab/retrieve could be used as well)
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
                     consecutive_errors += 1
-                    if consecutive_errors >= 5:
-                        self.logger.warning(f"Grab failed {consecutive_errors} times")
-                        self._reconnect()
+                    time.sleep(0.001)
                     continue
-                
-                # Retrieve frame
-                ret, frame = self.cap.retrieve()
-                
-                if ret and frame is not None:
-                    now = time.time()
-                    
-                    # Thread-safe update - MINIMAL LOCK TIME
-                    with self._lock:
-                        self._frame_counter += 1
-                        self._latest_frame = CameraFrame(
-                            frame=frame,
-                            timestamp=now,
-                            counter=self._frame_counter
-                        )
-                        self._fps_timestamps.append(now)
-                        
-                        if not self._ready_event.is_set():
-                            self._ready_event.set()
-                    
-                    consecutive_errors = 0
-                    
-                else:
-                    consecutive_errors += 1
-                    if consecutive_errors >= 3:
-                        self._reconnect()
+
+                now = time.time()
+
+                with self._lock:
+                    self._frame_counter += 1
+                    cam_frame = CameraFrame(frame=frame, timestamp=now, counter=self._frame_counter)
+                    # keep latest only
+                    self.cam_deque.clear()
+                    self.cam_deque.append(cam_frame)
+                    self._fps_timestamps.append(now)
+                    if not self._ready_event.is_set():
+                        self._ready_event.set()
+
+                consecutive_errors = 0
+
+                # Diagnostic / small sleep to avoid starving other threads on some platforms
+                if time.time() - last_diagnostic > 5.0:
+                    last_diagnostic = time.time()
 
             except Exception as e:
                 self.logger.error(f"Error in capture loop: {e}", exc_info=True)
@@ -189,45 +174,24 @@ class CameraManager:
         self.logger.info("Camera capture loop stopped.")
 
     def _reconnect(self) -> bool:
-        """Thread-safe camera reconnection"""
         with self._lock:
             self.logger.warning("Attempting camera reconnection...")
-            
             if self.cap:
                 try:
                     self.cap.release()
-                except:
+                except Exception:
                     pass
                 self.cap = None
-            
             time.sleep(0.5)
             return self._initialize_camera()
 
-    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Thread-safe frame read"""
-        with self._lock:
-            if self._latest_frame is None:
-                return False, None
-            # OPTIMIZATION: Return reference, not copy (caller decides)
-            return True, self._latest_frame.frame
-
-    def read_copy(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Get frame copy when needed"""
-        with self._lock:
-            if self._latest_frame is None:
-                return False, None
-            return True, self._latest_frame.frame.copy()
-
     def get_latest_frame_info(self) -> Optional[CameraFrame]:
-        """Get complete frame info (thread-safe) - NO COPY for speed"""
         with self._lock:
-            if self._latest_frame is None:
+            if not self.cam_deque:
                 return None
-            # Return reference for speed, caller should not modify
-            return self._latest_frame
+            return self.cam_deque[-1]
 
     def get_fps(self) -> float:
-        """Calculate actual FPS"""
         with self._lock:
             if len(self._fps_timestamps) < 2:
                 return 0.0
@@ -237,40 +201,17 @@ class CameraManager:
             return (len(self._fps_timestamps) - 1) / elapsed
 
     def is_healthy(self, timeout: float = 2.0) -> bool:
-        """Check camera health"""
         with self._lock:
-            if self._latest_frame is None:
+            if not self.cam_deque:
                 return False
-            age = time.time() - self._latest_frame.timestamp
+            age = time.time() - self.cam_deque[-1].timestamp
             return age < timeout
 
     def get_frame_counter(self) -> int:
-        """Get current frame counter (thread-safe)"""
         with self._lock:
             return self._frame_counter
 
-    def wait_for_new_frame(self, last_counter: int, timeout: float = 0.1) -> bool:
-        """Wait for new frame - OPTIMIZED"""
-        # Quick check first (no sleep)
-        with self._lock:
-            if self._frame_counter > last_counter:
-                return True
-        
-        start_time = time.time()
-        
-        # OPTIMIZATION: Longer sleep interval on Pi4
-        sleep_time = 0.0002 if self.is_windows else 0.0005  # 0.2ms or 0.5ms
-        
-        while time.time() - start_time < timeout:
-            with self._lock:
-                if self._frame_counter > last_counter:
-                    return True
-            time.sleep(sleep_time)
-        
-        return False
-
     def close(self, timeout: float = 2.0) -> None:
-        """Graceful shutdown"""
         self.logger.info("Closing camera...")
         self._state = SystemState.STOPPING
         self._stop_event.set()
@@ -282,11 +223,10 @@ class CameraManager:
             if self.cap:
                 try:
                     self.cap.release()
-                except:
+                except Exception:
                     pass
                 self.cap = None
-            
-            self._latest_frame = None
+            self.cam_deque.clear()
             self._frame_counter = 0
             self._fps_timestamps.clear()
 
@@ -294,75 +234,35 @@ class CameraManager:
         self.logger.info("Camera closed.")
 
 
-class FrameWaiter:
-    """Helper to wait for a new frame from the camera - OPTIMIZED"""
-    
-    def __init__(self):
-        self._last_counter = -1
-        self._lock = threading.Lock()
-    
-    def wait_for_new_frame(self, cam: 'CameraManager', timeout: float = 0.05) -> bool:
-        """Wait until a new frame is available - FAST PATH"""
-        with self._lock:
-            current_counter = cam.get_frame_counter()
-            
-            # Fast path: new frame already available
-            if current_counter > self._last_counter:
-                self._last_counter = current_counter
-                return True
-        
-        # Slow path: Wait with micro-sleeps - OPTIMIZED FOR PI
-        start_time = time.time()
-        sleep_time = 0.0005  # 0.5ms for Pi4
-        
-        while time.time() - start_time < timeout:
-            with self._lock:
-                current_counter = cam.get_frame_counter()
-                if current_counter > self._last_counter:
-                    self._last_counter = current_counter
-                    return True
-            time.sleep(sleep_time)
-        
-        with self._lock:
-            self._last_counter = cam.get_frame_counter()
-        
-        return False
-
-
-# ==================== MEDIAPIPE PROCESSOR ====================
 class MediaPipeProcessor:
     """
-    Thread-safe MediaPipe processor - OPTIMIZED FOR PI4
+    Processor that repeatedly reads the latest frame from CameraManager and calls detector.detect_async.
+    The detector's callback (provided when creating the detector) should append results into the
+    result_deque (shared with main).
     """
 
-    def __init__(self, detector, result_queue: queue.Queue, logger):
+    def __init__(self, detector, result_deque: deque, logger):
         self.detector = detector
-        self.result_queue = result_queue
+        self.result_deque = result_deque
         self.logger = logger
-        
-        # Thread control
+
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._state = SystemState.INITIALIZING
-        
-        # Timestamp management (monotonic)
+
         self._timestamp_ms = 0
-        self._frame_interval_ms = 33  # ~30 FPS default
+        self._frame_interval_ms = 33
         self._last_processed_counter = -1
         self._lock = threading.Lock()
-        
-        # OPTIMIZATION: Reduce error tracking overhead
+
         self._error_count = 0
         self._max_errors = 5
 
     def start(self, cam: CameraManager) -> None:
-        """Start processing thread"""
         self._stop_event.clear()
-        
-        # Calculate frame interval from camera FPS
         if cam.target_fps > 0:
             self._frame_interval_ms = int(1000 / cam.target_fps)
-        
+
         self._thread = threading.Thread(
             target=self._process_loop,
             args=(cam,),
@@ -374,74 +274,64 @@ class MediaPipeProcessor:
         self.logger.info(f"MediaPipe processor started (interval: {self._frame_interval_ms}ms)")
 
     def _process_loop(self, cam: CameraManager) -> None:
-        """Main processing loop - OPTIMIZED FOR PI4"""
-        skip_count = 0
-        
         while not self._stop_event.is_set():
             try:
-                # Get latest frame - NO COPY for speed
                 frame_info = cam.get_latest_frame_info()
-                
                 if frame_info is None:
                     time.sleep(0.001)
                     continue
 
-                # Skip if already processed
                 with self._lock:
                     if frame_info.counter == self._last_processed_counter:
                         time.sleep(0.001)
                         continue
-                    
+
                     self._last_processed_counter = frame_info.counter
-                    # Monotonic timestamp increment
                     self._timestamp_ms += self._frame_interval_ms
                     current_timestamp = self._timestamp_ms
 
-                # Convert to RGB for MediaPipe - OPTIMIZED
-                # Use in-place if possible
+                # Drop stale frames
+                if time.time() - frame_info.timestamp > 0.5:
+                    # too old
+                    continue
+
+                # Convert color and build mp.Image
                 frame_rgb = cv2.cvtColor(frame_info.frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
-                # Async detection
+                # Use detector async API; callback should push results to result_deque
                 self.detector.detect_async(mp_image, current_timestamp)
-                self._error_count = 0  # Reset on success
+                self._error_count = 0
 
             except ValueError as e:
                 if "monotonically increasing" in str(e):
                     self.logger.error(f"Timestamp error: {e}")
                     with self._lock:
-                        # Jump forward to fix monotonic issue
                         self._timestamp_ms += self._frame_interval_ms * 5
                         self._error_count += 1
                 else:
                     self.logger.error(f"ValueError: {e}", exc_info=True)
                     self._error_count += 1
-                
-                # Stop if too many errors
+
                 if self._error_count > self._max_errors:
                     self.logger.critical("Too many processing errors")
                     self._stop_event.set()
-                
+
                 time.sleep(0.01)
-                
+
             except Exception as e:
                 self.logger.error(f"Error in processing loop: {e}", exc_info=True)
                 self._error_count += 1
-                
                 if self._error_count > self._max_errors:
                     self._stop_event.set()
-                
                 time.sleep(0.01)
 
         self.logger.info("MediaPipe processor stopped.")
 
     def stop(self, timeout: float = 1.0) -> None:
-        """Stop processor gracefully"""
         self.logger.info("Stopping MediaPipe processor...")
         self._state = SystemState.STOPPING
         self._stop_event.set()
-
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
-
         self._state = SystemState.STOPPED

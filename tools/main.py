@@ -1,3 +1,5 @@
+
+# main.py (updated display flow using result_deque)
 import cv2
 import mediapipe as mp
 
@@ -11,7 +13,7 @@ from typing import Optional, Tuple
 from collections import deque
 from dataclasses import dataclass
 
-from src.threadflow import CameraManager, MediaPipeProcessor, FrameWaiter
+from src.threadflow import CameraManager, MediaPipeProcessor
 from src.logger import create_log, save_suspected_frame
 from src.utils import load_config, initialize_gpio, flash_led, cleanup_resources
 from src.models import (
@@ -43,30 +45,31 @@ def create_result_callback(result_deque: deque, result_lock: threading.Lock, sto
     def result_callback(result, output_image, timestamp_ms: int) -> None:
         if stop_event.is_set():
             return
-        
+
         try:
             frame_rgb = output_image.numpy_view()
-            
+
             with result_lock:
+                result_deque.clear()
                 result_deque.append(
                     DetectionResult(
                         frame_rgb=frame_rgb,
                         detection=result,
                         timestamp_ms=timestamp_ms,
-                        frame_counter=0  # Will be updated by processor
+                        frame_counter=0  # Will be updated by processor if needed
                     )
                 )
-                
+
         except Exception as e:
             logger.error(f"Error in result callback: {e}")
-    
+
     return result_callback
 
 
-# ==================== MAIN DISPLAY & LOGIC ====================
+# ==================== MAIN DISPLAY & LOGIC (deque-based) ====================
 def display_and_process(
     cam: CameraManager,
-    result_queue: deque,
+    result_deque: deque,
     result_lock: threading.Lock,
     stop_event: threading.Event,
     configs: dict,
@@ -74,8 +77,8 @@ def display_and_process(
     gpio_enabled: bool,
     led_pin: int,
 ) -> None:
-    """Main display loop with proper synchronization"""
-    logger.info("Display & logic loop started.")
+    """Main display loop that only reads latest result from result_deque. Main controls total FPS."""
+    logger.info("Display & logic loop (deque-based) started.")
 
     # Config
     blink_threshold_wo_pitch = configs["blink_threshold_wo_pitch"]
@@ -91,79 +94,45 @@ def display_and_process(
     delay_drowsy = None
     eye_closed_history = deque(maxlen=perclos_window_size)
     last_detection_result: Optional[DetectionResult] = None
-    no_result_counter = 0
-    max_no_result = 30
-    
-    # Frame synchronization
-    last_processed_counter = -1
-    frame_waiter = FrameWaiter()
-    
-    # FPS calculation for main loop
+    last_displayed_frame = None
+
+    # Main controls display fps
+    main_target_fps = configs.get("display_fps", configs.get("frame_rate", 15))
+    interval = 1.0 / max(1.0, float(main_target_fps))
+
     main_loop_fps_timestamps = deque(maxlen=30)
 
     while not stop_event.is_set():
-        try:
-            loop_start = time.time()
-            
-            # ===== WAIT FOR NEW CAMERA FRAME (with short timeout) =====
-            # Wait for new frame from camera
-            frame_waiter.wait_for_new_frame(cam, timeout=0.01)  # 10ms timeout
-            
-            # Get latest result (no drain needed with maxlen)
-            has_new_result = False
-            with result_lock:
-                if result_queue:
-                    last_detection_result = result_queue[-1]
-                    has_new_result = True
+        loop_start = time.time()
 
-            if has_new_result:
-                no_result_counter = 0
-
-            # Get current camera frame
-            frame_info = cam.get_latest_frame_info()
-            
-            if frame_info is None:
-                time.sleep(0.001)
-                continue
-            
-            # Skip if no new frame
-            if frame_info.counter == last_processed_counter:
-                time.sleep(0.001)
-                continue
-            
-            last_processed_counter = frame_info.counter
-            current_frame = frame_info.frame
-
-            # Use detection result if available
-            if last_detection_result is not None:
-                frame_rgb = last_detection_result.frame_rgb
-                detection_result = last_detection_result.detection
+        # Grab latest result (non-blocking)
+        with result_lock:
+            if result_deque:
+                last_detection_result = result_deque[-1]
             else:
-                frame_rgb = cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB)
-                detection_result = None
-                no_result_counter += 1
+                last_detection_result = None
 
-            # Check for stale results
-            if no_result_counter > max_no_result:
-                logger.warning("No detection results for too long.")
+        if last_detection_result is not None:
+            # Unpack
+            frame_rgb = last_detection_result.frame_rgb
+            detection_result = last_detection_result.detection
 
-            # Process detection
-            if detection_result and detection_result.face_landmarks:
+            if detection_result and getattr(detection_result, 'face_landmarks', None):
                 # === FACE ANALYSIS ===
                 blendshapes = detection_result.face_blendshapes[0]
                 face_landmarks = detection_result.face_landmarks[0]
-                
+
                 annotated_frame = draw_face_landmarks(frame_rgb, detection_result)
                 gaze_info = calculate_gaze_direction(
                     face_landmarks, blendshapes, annotated_frame.shape
                 )
                 annotated_frame = draw_gaze_arrows(annotated_frame, gaze_info)
                 annotated_frame = cv2.flip(annotated_frame, 1)
-                
+
                 main_fps = len(main_loop_fps_timestamps) / max(
                     main_loop_fps_timestamps[-1] - main_loop_fps_timestamps[0], 1e-6
                 ) if len(main_loop_fps_timestamps) >= 2 else 0.0
-                
+
                 annotated_frame = display_info(annotated_frame, main_fps)
 
                 annotated_frame, blink_scores, text_end_y = render_blendshape_metrics(
@@ -177,12 +146,12 @@ def display_and_process(
                     text_end_y,
                     blink_threshold_wo_pitch,
                 )
-                
+
                 head_orientation = get_head_orientation(
                     detection_result.facial_transformation_matrixes[0]
                 )
                 annotated_frame = display_head_orientation(annotated_frame, head_orientation)
-                
+
                 # === DROWSINESS DETECTION ===
                 pitch = head_orientation["pitch"]
                 blink_threshold = (
@@ -190,12 +159,12 @@ def display_and_process(
                     if pitch_threshold_negative < pitch < pitch_threshold_positive 
                     else blink_threshold_pitch
                 )
-                
+
                 drowsy = (
                     blink_scores["left"] > blink_threshold and 
                     blink_scores["right"] > blink_threshold
                 )
-                
+
                 # Timing logic
                 if drowsy:
                     if not drowsy_prev:
@@ -205,16 +174,16 @@ def display_and_process(
                 else:
                     delay_drowsy = None
                     is_alert = False
-                
+
                 drowsy_prev = drowsy
 
                 # PERCLOS
                 eye_closed_history.append(drowsy)
                 perclos = sum(eye_closed_history) / len(eye_closed_history) if eye_closed_history else 0
-                
+
                 if perclos >= perclos_threshold:
                     is_alert = True
-                    
+
                 # Alert
                 if is_alert:
                     logger.warning("DROWSINESS DETECTED!")
@@ -223,7 +192,10 @@ def display_and_process(
                         annotated_frame=annotated_frame,
                     )
                     flash_led(led_pin, gpio_enabled, logger)
-                
+
+                display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
+                last_displayed_frame = display_frame
+
             else:
                 # No face detected
                 annotated_frame = cv2.flip(frame_rgb, 1)
@@ -231,25 +203,35 @@ def display_and_process(
                 main_fps = len(main_loop_fps_timestamps) / max(
                     main_loop_fps_timestamps[-1] - main_loop_fps_timestamps[0], 1e-6
                 ) if len(main_loop_fps_timestamps) >= 2 else 0.0
-                
+
                 annotated_frame = display_info(annotated_frame, cam_fps)
-            
-            # === DISPLAY ===
-            display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
-            cv2.imshow("Drowsiness Detection", display_frame)
+                display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
+                last_displayed_frame = display_frame
 
-            # === KEYBOARD ===
-            key = cv2.waitKey(1) & 0xFF
-            if key in [ord('q'), ord('Q'), 27]:
-                logger.info("User requested quit.")
-                stop_event.set()
-            
-            # Track main loop FPS
-            main_loop_fps_timestamps.append(time.time())
+        else:
+            # No detection result available: re-show last frame or display placeholder
+            if last_displayed_frame is None:
+                # black frame placeholder
+                placeholder = np.zeros((configs["frame_height"], configs["frame_width"], 3), dtype=np.uint8)
+                placeholder = display_info(placeholder, cam.get_fps())
+                display_frame = placeholder
+            else:
+                display_frame = last_displayed_frame
 
-        except Exception as e:
-            logger.error(f"Error in display loop: {e}", exc_info=True)
-            time.sleep(0.01)
+        # Show on screen
+        cv2.imshow("Drowsiness Detection", display_frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key in [ord('q'), ord('Q'), 27]:
+            logger.info("User requested quit.")
+            stop_event.set()
+
+        main_loop_fps_timestamps.append(time.time())
+
+        # sleep to enforce target fps
+        elapsed = time.time() - loop_start
+        to_sleep = interval - elapsed
+        if to_sleep > 0:
+            time.sleep(to_sleep)
 
     cv2.destroyAllWindows()
     logger.info("Display loop terminated.")
@@ -266,7 +248,7 @@ def main() -> None:
 
     # Shared resources
     stop_event = threading.Event()
-    result_queue = deque(maxlen=3)
+    result_deque = deque(maxlen=3)
     result_lock = threading.Lock()  # Added for thread safety
 
     try:
@@ -286,23 +268,24 @@ def main() -> None:
             sys.exit(1)
 
         # MediaPipe
-        callback = create_result_callback(result_queue, result_lock, stop_event, logger)
+        callback = create_result_callback(result_deque, result_lock, stop_event, logger)
         detector = create_face_detector(
             configs["model_path"], configs, logger, callback
         )
 
         # Processor
-        processor = MediaPipeProcessor(detector, result_queue, logger)
+        processor = MediaPipeProcessor(detector, result_deque, logger)
         processor.start(cam)
 
         # Main loop
         display_and_process(
-            cam, result_queue, result_lock, stop_event, configs, logger,
+            cam, result_deque, result_lock, stop_event, configs, logger,
             gpio_enabled, configs["led_pin"]
         )
 
     except KeyboardInterrupt:
-        logger.info("Interrupted by user.")
+        if logger:
+            logger.info("Interrupted by user.")
     except Exception as e:
         if logger:
             logger.critical(f"Fatal error: {e}", exc_info=True)
@@ -311,7 +294,7 @@ def main() -> None:
         # Cleanup
         if logger:
             logger.info("Shutting down...")
-        
+
         stop_event.set()
 
         if processor:
