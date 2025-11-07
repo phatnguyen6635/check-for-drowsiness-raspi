@@ -14,5 +14,5 @@ conda activate check-for-drowsiness
 # ----------------------------
 # Run main Python script
 # ----------------------------
-cd /home/pi/Documents/project/v1/check-for-drowsiness-raspi || exit
+cd /home/pi/Documents/project/check-for-drowsiness-raspi || exit
 python tools/main.py
