@@ -1,15 +1,8 @@
-
-# threadflow.py (deque-based pipeline)
-"""
-Reworked threadflow: camera writes latest frame into an internal deque (maxlen=1).
-MediaPipeProcessor reads the latest frame (no backlog) and calls detector.detect_async.
-Results are expected to be pushed into a result_deque (shared by main) via the detector callback.
-"""
-
 import cv2
 import numpy as np
 import mediapipe as mp
 
+import queue
 import time
 import threading
 from collections import deque
@@ -235,15 +228,8 @@ class CameraManager:
 
 
 class MediaPipeProcessor:
-    """
-    Processor that repeatedly reads the latest frame from CameraManager and calls detector.detect_async.
-    The detector's callback (provided when creating the detector) should append results into the
-    result_deque (shared with main).
-    """
-
-    def __init__(self, detector, result_deque: deque, logger):
+    def __init__(self, detector, logger):
         self.detector = detector
-        self.result_deque = result_deque
         self.logger = logger
 
         self._stop_event = threading.Event()
