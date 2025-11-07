@@ -1,5 +1,4 @@
 
-# main.py (updated display flow using result_deque)
 import cv2
 import mediapipe as mp
 
@@ -50,7 +49,6 @@ def create_result_callback(result_deque: deque, result_lock: threading.Lock, sto
             frame_rgb = output_image.numpy_view()
 
             with result_lock:
-                result_deque.clear()
                 result_deque.append(
                     DetectionResult(
                         frame_rgb=frame_rgb,
@@ -68,7 +66,6 @@ def create_result_callback(result_deque: deque, result_lock: threading.Lock, sto
 
 # ==================== MAIN DISPLAY & LOGIC (deque-based) ====================
 def display_and_process(
-    cam: CameraManager,
     result_deque: deque,
     result_lock: threading.Lock,
     stop_event: threading.Event,
@@ -174,7 +171,6 @@ def display_and_process(
                 else:
                     delay_drowsy = None
                     is_alert = False
-
                 drowsy_prev = drowsy
 
                 # PERCLOS
@@ -188,7 +184,7 @@ def display_and_process(
                 if is_alert:
                     logger.warning("DROWSINESS DETECTED!")
                     save_suspected_frame(
-                        origin_frame=display_info(cv2.flip(frame_rgb, 1), cam.get_fps()),
+                        origin_frame=display_info(cv2.flip(frame_rgb, 1), main_fps),
                         annotated_frame=annotated_frame,
                     )
                     flash_led(led_pin, gpio_enabled, logger)
@@ -199,12 +195,11 @@ def display_and_process(
             else:
                 # No face detected
                 annotated_frame = cv2.flip(frame_rgb, 1)
-                cam_fps = cam.get_fps()
                 main_fps = len(main_loop_fps_timestamps) / max(
                     main_loop_fps_timestamps[-1] - main_loop_fps_timestamps[0], 1e-6
                 ) if len(main_loop_fps_timestamps) >= 2 else 0.0
 
-                annotated_frame = display_info(annotated_frame, cam_fps)
+                annotated_frame = display_info(annotated_frame, main_fps)
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                 last_displayed_frame = display_frame
 
@@ -213,7 +208,7 @@ def display_and_process(
             if last_displayed_frame is None:
                 # black frame placeholder
                 placeholder = np.zeros((configs["frame_height"], configs["frame_width"], 3), dtype=np.uint8)
-                placeholder = display_info(placeholder, cam.get_fps())
+                placeholder = display_info(placeholder, 0)
                 display_frame = placeholder
             else:
                 display_frame = last_displayed_frame
@@ -279,7 +274,7 @@ def main() -> None:
 
         # Main loop
         display_and_process(
-            cam, result_deque, result_lock, stop_event, configs, logger,
+            result_deque, result_lock, stop_event, configs, logger,
             gpio_enabled, configs["led_pin"]
         )
 

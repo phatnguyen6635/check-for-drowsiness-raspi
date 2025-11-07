@@ -53,7 +53,7 @@ class CameraManager:
         self._ready_event = threading.Event()
 
         # Keep latest frame in a deque (maxlen=1) to enforce latest-only semantics
-        self.cam_deque: deque = deque(maxlen=3)
+        self.cam_deque: deque = deque(maxlen=1)
         self._frame_counter: int = 0
 
         # FPS tracking

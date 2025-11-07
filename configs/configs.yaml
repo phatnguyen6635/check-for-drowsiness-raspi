@@ -20,7 +20,7 @@ perclos_threshold: 0.5
 camera_id: 0
 frame_width: 1280
 frame_height: 720
-frame_rate: 30
+frame_rate: 10
 
 ### RPI ###
-led_pin: 17
+led_pin: 21
