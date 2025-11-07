@@ -42,7 +42,6 @@ def create_result_callback(result_queue: queue.Queue, result_lock: threading.Loc
     def result_callback(result, output_image, timestamp_ms: int) -> None:
         if stop_event.is_set():
             return
-
         try:
             frame_rgb = output_image.numpy_view()
             new_result = DetectionResult(
@@ -51,20 +50,14 @@ def create_result_callback(result_queue: queue.Queue, result_lock: threading.Loc
                 timestamp_ms=timestamp_ms,
                 frame_counter=0
             )
-
             with result_lock:
-                if result_queue.empty():
-                    try:
-                        result_queue.put_nowait(new_result)
-                        time.sleep(0.001)
-                    except queue.Full:
-                        pass
-                else:
-                    pass
-
+                try:
+                    result_queue.put_nowait(new_result)
+                except queue.Full:
+                    time.sleep(0.001)
+                    pass 
         except Exception as e:
-            logger.error(f"Error in result callback: {e}", exc_info=True)
-
+            logger.error("Error in result callback", exc_info=True)
     return result_callback
 
 
@@ -248,7 +241,7 @@ def main() -> None:
 
     # Shared resources
     stop_event = threading.Event()
-    result_queue = queue.Queue(maxsize=1)
+    result_queue = queue.Queue(maxsize=3)
     result_lock = threading.Lock()  # Added for thread safety
 
     try:
@@ -274,7 +267,7 @@ def main() -> None:
         )
 
         # Processor
-        processor = MediaPipeProcessor(detector, logger)
+        processor = MediaPipeProcessor(detector, result_queue, logger)
         processor.start(cam)
 
         # Main loop
