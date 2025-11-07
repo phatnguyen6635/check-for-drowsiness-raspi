@@ -38,28 +38,24 @@ class DetectionResult:
 
 
 # ==================== RESULT CALLBACK ====================
-def create_result_callback(result_queue: queue.Queue, stop_event: threading.Event, logger):
+def create_result_callback(result_deque: deque, result_lock: threading.Lock, stop_event: threading.Event, logger):
     """Factory function to create callback with proper closure"""
     def result_callback(result, output_image, timestamp_ms: int) -> None:
         if stop_event.is_set():
             return
         
         try:
-            frame_rgb = output_image.numpy_view().copy()
+            frame_rgb = output_image.numpy_view()
             
-            # Non-blocking put with timeout
-            try:
-                result_queue.put(
+            with result_lock:
+                result_deque.append(
                     DetectionResult(
                         frame_rgb=frame_rgb,
                         detection=result,
                         timestamp_ms=timestamp_ms,
                         frame_counter=0  # Will be updated by processor
-                    ),
-                    timeout=0.001
+                    )
                 )
-            except queue.Full:
-                pass  # Drop frame if queue full
                 
         except Exception as e:
             logger.error(f"Error in result callback: {e}")
@@ -70,7 +66,8 @@ def create_result_callback(result_queue: queue.Queue, stop_event: threading.Even
 # ==================== MAIN DISPLAY & LOGIC ====================
 def display_and_process(
     cam: CameraManager,
-    result_queue: queue.Queue,
+    result_queue: deque,
+    result_lock: threading.Lock,
     stop_event: threading.Event,
     configs: dict,
     logger,
@@ -112,19 +109,14 @@ def display_and_process(
             # Wait for new frame from camera
             frame_waiter.wait_for_new_frame(cam, timeout=0.01)  # 10ms timeout
             
-            # Drain queue to get latest result
+            # Get latest result (no drain needed with maxlen)
             has_new_result = False
-            temp_result = None
-            
-            while True:
-                try:
-                    temp_result = result_queue.get_nowait()
+            with result_lock:
+                if result_queue:
+                    last_detection_result = result_queue[-1]
                     has_new_result = True
-                except queue.Empty:
-                    break
-            
-            if has_new_result and temp_result:
-                last_detection_result = temp_result
+
+            if has_new_result:
                 no_result_counter = 0
 
             # Get current camera frame
@@ -219,7 +211,6 @@ def display_and_process(
                 # PERCLOS
                 eye_closed_history.append(drowsy)
                 perclos = sum(eye_closed_history) / len(eye_closed_history) if eye_closed_history else 0
-                print(f"PERCLOS: {perclos:.2f}")
                 
                 if perclos >= perclos_threshold:
                     is_alert = True
@@ -275,7 +266,8 @@ def main() -> None:
 
     # Shared resources
     stop_event = threading.Event()
-    result_queue = queue.Queue(maxsize=5)
+    result_queue = deque(maxlen=3)
+    result_lock = threading.Lock()  # Added for thread safety
 
     try:
         # Initialize
@@ -294,7 +286,7 @@ def main() -> None:
             sys.exit(1)
 
         # MediaPipe
-        callback = create_result_callback(result_queue, stop_event, logger)
+        callback = create_result_callback(result_queue, result_lock, stop_event, logger)
         detector = create_face_detector(
             configs["model_path"], configs, logger, callback
         )
@@ -305,7 +297,7 @@ def main() -> None:
 
         # Main loop
         display_and_process(
-            cam, result_queue, stop_event, configs, logger,
+            cam, result_queue, result_lock, stop_event, configs, logger,
             gpio_enabled, configs["led_pin"]
         )
 

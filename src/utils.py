@@ -9,7 +9,7 @@ import threading
 try:
     import RPi.GPIO as GPIO
     RPI_AVAILABLE = True
-except RuntimeError:
+except ModuleNotFoundError:
     GPIO = None
     RPI_AVAILABLE = False
 
