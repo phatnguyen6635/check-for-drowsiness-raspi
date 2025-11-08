@@ -56,6 +56,7 @@ def create_result_callback(result_deque: deque, result_lock: threading.Lock, sto
                         frame_counter=0  # Will be updated by processor if needed
                     )
                 )
+                time.sleep(0.001)
 
         except Exception as e:
             logger.error(f"Error in result callback: {e}")
@@ -179,6 +180,7 @@ def display_and_process(
                     is_alert = True
 
                 # Alert
+                time.sleep(0.001)
                 if is_alert:
                     logger.warning("DROWSINESS DETECTED!")
                     save_suspected_frame(
