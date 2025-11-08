@@ -228,9 +228,9 @@ class CameraManager:
 
 
 class MediaPipeProcessor:
-    def __init__(self, detector, result_queue: queue.Queue, logger):
+    def __init__(self, detector, result_deque: deque, logger):
         self.detector = detector
-        self.result_queue = result_queue
+        self.result_deque = result_deque
         self.logger = logger
 
         self._stop_event = threading.Event()
@@ -261,7 +261,6 @@ class MediaPipeProcessor:
         self.logger.info(f"MediaPipe processor started (interval: {self._frame_interval_ms}ms)")
 
     def _process_loop(self, cam: CameraManager) -> None:
-        self.dropped_submission_count = 0
         while not self._stop_event.is_set():
             try:
                 frame_info = cam.get_latest_frame_info()
@@ -277,22 +276,19 @@ class MediaPipeProcessor:
                     self._last_processed_counter = frame_info.counter
                     self._timestamp_ms += self._frame_interval_ms
                     current_timestamp = self._timestamp_ms
-                
-                if self.result_queue.full():
-                    self.dropped_submission_count += 1
-                    time.sleep(0.001)
-                    continue
 
                 # Drop stale frames
                 if time.time() - frame_info.timestamp > 0.5:
                     # too old
                     continue
+                
+                time.sleep(0.002)  # Yield to other threads
 
                 # Convert color and build mp.Image
                 frame_rgb = cv2.cvtColor(frame_info.frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
-                # Use detector async API;    should push results to result_deque
+                # Use detector async API; callback should push results to result_deque
                 self.detector.detect_async(mp_image, current_timestamp)
                 self._error_count = 0
 
@@ -309,9 +305,7 @@ class MediaPipeProcessor:
                 if self._error_count > self._max_errors:
                     self.logger.critical("Too many processing errors")
                     self._stop_event.set()
-
-                time.sleep(0.01)
-
+                    
             except Exception as e:
                 self.logger.error(f"Error in processing loop: {e}", exc_info=True)
                 self._error_count += 1

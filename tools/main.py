@@ -38,32 +38,33 @@ class DetectionResult:
 
 
 # ==================== RESULT CALLBACK ====================
-def create_result_callback(result_queue: queue.Queue, result_lock: threading.Lock, stop_event: threading.Event, logger):
+def create_result_callback(result_deque: deque, result_lock: threading.Lock, stop_event: threading.Event, logger):
+    """Factory function to create callback with proper closure"""
     def result_callback(result, output_image, timestamp_ms: int) -> None:
         if stop_event.is_set():
             return
+
         try:
             frame_rgb = output_image.numpy_view()
-            new_result = DetectionResult(
-                frame_rgb=frame_rgb,
-                detection=result,
-                timestamp_ms=timestamp_ms,
-                frame_counter=0
-            )
-            with result_lock:
-                try:
-                    result_queue.put_nowait(new_result)
-                except queue.Full:
-                    time.sleep(0.001)
-                    pass 
-        except Exception as e:
-            logger.error("Error in result callback", exc_info=True)
-    return result_callback
 
+            with result_lock:
+                result_deque.append(
+                    DetectionResult(
+                        frame_rgb=frame_rgb,
+                        detection=result,
+                        timestamp_ms=timestamp_ms,
+                        frame_counter=0  # Will be updated by processor if needed
+                    )
+                )
+
+        except Exception as e:
+            logger.error(f"Error in result callback: {e}")
+
+    return result_callback
 
 # ==================== MAIN DISPLAY & LOGIC (deque-based) ====================
 def display_and_process(
-    result_queue: queue.Queue,
+    result_deque: deque,
     result_lock: threading.Lock,
     stop_event: threading.Event,
     configs: dict,
@@ -101,11 +102,10 @@ def display_and_process(
 
         # Grab latest result (non-blocking)
         with result_lock:
-            try:
-                last_detection_result = result_queue.get_nowait()
-            except queue.Empty:
+            if result_deque:
+                last_detection_result = result_deque[-1]
+            else:
                 last_detection_result = None
-                time.sleep(0.001)
 
         if last_detection_result is not None:
             # Unpack
@@ -241,7 +241,7 @@ def main() -> None:
 
     # Shared resources
     stop_event = threading.Event()
-    result_queue = queue.Queue(maxsize=3)
+    result_deque = deque(maxlen=3)
     result_lock = threading.Lock()  # Added for thread safety
 
     try:
@@ -261,18 +261,18 @@ def main() -> None:
             sys.exit(1)
 
         # MediaPipe
-        callback = create_result_callback(result_queue, result_lock, stop_event, logger)
+        callback = create_result_callback(result_deque, result_lock, stop_event, logger)
         detector = create_face_detector(
             configs["model_path"], configs, logger, callback
         )
 
         # Processor
-        processor = MediaPipeProcessor(detector, result_queue, logger)
+        processor = MediaPipeProcessor(detector, result_deque, logger)
         processor.start(cam)
 
         # Main loop
         display_and_process(
-            result_queue, result_lock, stop_event, configs, logger,
+            result_deque, result_lock, stop_event, configs, logger,
             gpio_enabled, configs["led_pin"]
         )
 
