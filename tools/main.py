@@ -130,7 +130,7 @@ def display_and_process(
                 ) if len(main_loop_fps_timestamps) >= 2 else 0.0
 
                 annotated_frame = display_info(annotated_frame, main_fps)
-
+ 
                 annotated_frame, blink_scores, text_end_y = render_blendshape_metrics(
                     annotated_frame, blendshapes
                 )
@@ -295,11 +295,8 @@ def main() -> None:
         if processor:
             processor.stop(timeout=2.0)
 
-        if cam:
-            cam.close(timeout=2.0)
-
         cleanup_resources(
-            cam=None,
+            cam=cam,
             detector=detector,
             led_pin=configs["led_pin"] if configs else 0,
             gpio_enabled=gpio_enabled,

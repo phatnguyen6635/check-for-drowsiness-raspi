@@ -152,6 +152,7 @@ class CameraManager:
                     self._fps_timestamps.append(now)
                     if not self._ready_event.is_set():
                         self._ready_event.set()
+                    time.sleep(0.001)  # Yield to other threads
 
                 consecutive_errors = 0
 

@@ -24,7 +24,7 @@ def load_config(config_path='configs/configs.yaml'):
         
         required_keys = ['model_path', 'num_faces', 'min_face_detection_confidence',
                          'min_face_presence_confidence', 'blink_threshold_pitch',
-                         'blink_threshold_wo_pitch', 'camera_id', 'frame_width',
+                         'blink_threshold_wo_pitch', 'frame_width',
                          'frame_height', 'frame_rate', 'led_pin']
         
         for key in required_keys:
