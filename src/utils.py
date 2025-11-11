@@ -65,7 +65,15 @@ def flash_led(led_pin, gpio_enabled, logger, duration=2):
         except Exception as e:
             logger.error(f"GPIO blink error: {e}")
     threading.Thread(target=_blink, daemon=True).start()
-        
+
+def set_relay(gpio_enabled, led_pin, logger, state):
+    if not gpio_enabled:
+        return
+    try:
+        GPIO.output(led_pin, GPIO.HIGH if not state else GPIO.LOW)
+    except Exception as e:
+        logger.error(f"GPIO blink error: {e}")
+  
 def cleanup_resources(cam, detector, led_pin, gpio_enabled, logger):
     """Cleanup all resources safely"""
     logger.info("Cleaning up resources...")

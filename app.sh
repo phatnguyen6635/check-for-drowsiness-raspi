@@ -8,7 +8,7 @@ cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=Q-AEye
 Comment=Run Drowsiness AI Docker
-Exec=$APP_DIR/run.sh
+Exec=$APP_DIR/run_mainui.sh
 Icon=$APP_DIR/logo/icon.png
 Terminal=false
 Type=Application

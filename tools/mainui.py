@@ -15,7 +15,7 @@ from typing import Optional
 # Local modules (same as in main.py)
 from src.threadflow import CameraManager, MediaPipeProcessor
 from src.logger import create_log, save_suspected_frame
-from src.utils import initialize_gpio, flash_led, cleanup_resources
+from src.utils import initialize_gpio, set_relay, cleanup_resources
 from src.models import (
     create_face_detector,
     draw_face_landmarks,
@@ -136,7 +136,7 @@ def display_and_process(
     eye_closed_history = deque(maxlen=30)
     last_detection_result: Optional[DetectionResult] = None
     last_displayed_frame = None
-
+    relay_on = False
     main_loop_fps_timestamps = deque(maxlen=30)
 
     while not stop_event.is_set():
@@ -164,7 +164,8 @@ def display_and_process(
                 last_detection_result = result_deque[-1]
             else:
                 last_detection_result = None
-
+        
+        is_alert = False
         if last_detection_result is not None:
             frame_rgb = last_detection_result.frame_rgb
             detection_result = last_detection_result.detection
@@ -220,8 +221,11 @@ def display_and_process(
                         is_alert = False
                     drowsy_prev = drowsy
 
-                    eye_closed_history.append(drowsy)
-                    perclos = sum(eye_closed_history) / len(eye_closed_history) if eye_closed_history else 0
+                    if eye_closed_history and len(eye_closed_history) >= perclos_window_size:
+                        perclos = sum(eye_closed_history) / len(eye_closed_history)
+                    else:
+                        perclos = 0
+                    
                     if perclos >= perclos_threshold:
                         is_alert = True
 
@@ -236,7 +240,6 @@ def display_and_process(
                             )
                         except Exception as e:
                             logger.error(f"Error saving suspected frame: {e}")
-                        flash_led(led_pin, gpio_enabled, logger)
 
                     display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                     last_displayed_frame = display_frame
@@ -260,7 +263,14 @@ def display_and_process(
                 last_displayed_frame = display_frame
             else:
                 display_frame = last_displayed_frame
-
+                
+        if is_alert and not relay_on:
+            set_relay(gpio_enabled, led_pin, logger, True)
+            relay_on = True
+        elif not is_alert and relay_on:
+            set_relay(gpio_enabled, led_pin, logger, False)
+            relay_on = False
+            
         try:
             if ui_queue.full():
                 try:
