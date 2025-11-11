@@ -174,6 +174,7 @@ def display_and_process(
                 drowsy_prev = drowsy
 
                 # PERCLOS
+                eye_closed_history.append(drowsy)
                 if eye_closed_history and len(eye_closed_history) >= perclos_window_size:
                     perclos = sum(eye_closed_history) / len(eye_closed_history)
                 else:

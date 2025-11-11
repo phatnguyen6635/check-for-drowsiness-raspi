@@ -154,7 +154,7 @@ def display_and_process(
 
         # adapt PERCLOS window if changed
         if eye_closed_history.maxlen != perclos_window_size:
-            eye_closed_history = deque(eye_closed_history, maxlen=perclos_window_size)
+            eye_closed_history = deque(maxlen=perclos_window_size)
 
         main_target_fps = configs.get("frame_rate", 15)
         interval = 1.0 / max(1.0, float(main_target_fps))
@@ -221,6 +221,7 @@ def display_and_process(
                         is_alert = False
                     drowsy_prev = drowsy
 
+                    eye_closed_history.append(drowsy)
                     if eye_closed_history and len(eye_closed_history) >= perclos_window_size:
                         perclos = sum(eye_closed_history) / len(eye_closed_history)
                     else:
