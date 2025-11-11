@@ -45,7 +45,7 @@ def initialize_gpio(led_pin, logger):
     try:
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(led_pin, GPIO.OUT)
-        GPIO.output(led_pin, GPIO.LOW)
+        GPIO.output(led_pin, GPIO.HIGH)
         logger.info(f"GPIO initialized on pin {led_pin}")
         return True
     
