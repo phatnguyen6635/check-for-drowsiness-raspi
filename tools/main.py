@@ -223,7 +223,7 @@ def display_and_process(
             relay_on = False
 
         # Show on screen
-        cv2.imshow("Drowsiness Detection", display_frame)
+        # cv2.imshow("Drowsiness Detection", display_frame)
         key = cv2.waitKey(1) & 0xFF
         if key in [ord('q'), ord('Q'), 27]:
             logger.info("User requested quit.")
