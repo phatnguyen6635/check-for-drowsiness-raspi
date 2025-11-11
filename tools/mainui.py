@@ -241,6 +241,8 @@ def display_and_process(
                             )
                         except Exception as e:
                             logger.error(f"Error saving suspected frame: {e}")
+                        eye_closed_history.clear()
+                        
 
                     display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                     last_displayed_frame = display_frame

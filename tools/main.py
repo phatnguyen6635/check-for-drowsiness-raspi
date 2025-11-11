@@ -191,6 +191,7 @@ def display_and_process(
                         origin_frame=display_info(cv2.flip(frame_rgb, 1), main_fps),
                         annotated_frame=annotated_frame,
                     )
+                    eye_closed_history.clear()
 
                 display_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
                 last_displayed_frame = display_frame
