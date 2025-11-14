@@ -1,10 +1,15 @@
----
-### MODEL ###
-model_path: "./models/face_landmarker_v2_with_blendshapes.task"
-
-### ALGORITHM ###
-blink_threshold: 0.4
-
-### RPI ###
-led_pin: 17
-# led_pin: 25
+blink_threshold_pitch: 0.7
+blink_threshold_wo_pitch: 0.4
+delay_drowsy_threshold: 2.0
+frame_height: 480
+frame_rate: 10
+frame_width: 640
+led_pin: 21
+min_face_detection_confidence: 0.4
+min_face_presence_confidence: 0.6
+model_path: ./models/face_landmarker_v2_with_blendshapes.task
+num_faces: 1
+perclos_threshold: 0.25
+perclos_window_size: 60
+pitch_threshold_negative: -40
+pitch_threshold_positive: 40
