@@ -139,18 +139,18 @@ def display_and_process(
     relay_on = False
     main_loop_fps_timestamps = deque(maxlen=30)
 
+    # read config snapshot (hot-reloadable)
+    configs = config_mgr.snapshot()
+    blink_threshold_wo_pitch = configs.get("blink_threshold_wo_pitch", 0.15)
+    blink_threshold_pitch = configs.get("blink_threshold_pitch", 0.25)
+    pitch_threshold_positive = configs.get("pitch_threshold_positive", 5.0)
+    pitch_threshold_negative = configs.get("pitch_threshold_negative", -5.0)
+    delay_drowsy_threshold = configs.get("delay_drowsy_threshold", 3.0)
+    perclos_window_size = configs.get("perclos_window_size", 30)
+    perclos_threshold = configs.get("perclos_threshold", 0.8)
+    
     while not stop_event.is_set():
         loop_start = time.time()
-
-        # read config snapshot (hot-reloadable)
-        configs = config_mgr.snapshot()
-        blink_threshold_wo_pitch = configs.get("blink_threshold_wo_pitch", 0.15)
-        blink_threshold_pitch = configs.get("blink_threshold_pitch", 0.25)
-        pitch_threshold_positive = configs.get("pitch_threshold_positive", 5.0)
-        pitch_threshold_negative = configs.get("pitch_threshold_negative", -5.0)
-        delay_drowsy_threshold = configs.get("delay_drowsy_threshold", 3.0)
-        perclos_window_size = configs.get("perclos_window_size", 30)
-        perclos_threshold = configs.get("perclos_threshold", 0.8)
 
         # adapt PERCLOS window if changed
         if eye_closed_history.maxlen != perclos_window_size:
