@@ -117,10 +117,21 @@ class CameraManager:
             return False
 
     def _capture_loop(self) -> None:
-        """Capture loop that always keeps only the newest frame in cam_deque."""
+        """Capture loop that keeps only the newest frame in cam_deque, but outputs at target FPS."""
         consecutive_errors = 0
         max_consecutive_errors = 10
         last_diagnostic = time.time()
+
+        # target fps control
+        target_fps = getattr(self, "_target_fps", 0) or 0
+        if target_fps > 0:
+            period = 1.0 / float(target_fps)
+        else:
+            period = 0.0
+
+        last_push_time = time.perf_counter()
+        latest_frame = None
+        last_read_time = None
 
         while not self._stop_event.is_set():
             try:
@@ -134,27 +145,60 @@ class CameraManager:
                             break
                         continue
 
-                # Use read() (grab/retrieve could be used as well)
+                # Read as fast as camera provides (keep latest)
                 ret, frame = self.cap.read()
+                now_read = time.time()
                 if not ret or frame is None:
                     consecutive_errors += 1
+                    # tiny sleep to avoid busy spin when camera fails temporarily
                     time.sleep(0.001)
                     continue
 
-                now = time.time()
+                # keep the most recent frame (not yet pushed to deque)
+                latest_frame = frame
+                last_read_time = now_read
 
-                with self._lock:
-                    self._frame_counter += 1
-                    cam_frame = CameraFrame(frame=frame, timestamp=now, counter=self._frame_counter)
-                    # keep latest only
-                    self.cam_deque.clear()
-                    self.cam_deque.append(cam_frame)
-                    self._fps_timestamps.append(now)
-                    if not self._ready_event.is_set():
-                        self._ready_event.set()
-                    time.sleep(0.001)  # Yield to other threads
+                # If no target fps set => push every frame (original behavior)
+                if period <= 0:
+                    with self._lock:
+                        self._frame_counter += 1
+                        cam_frame = CameraFrame(frame=latest_frame.copy(), timestamp=last_read_time, counter=self._frame_counter)
+                        self.cam_deque.clear()
+                        self.cam_deque.append(cam_frame)
+                        self._fps_timestamps.append(last_read_time)
+                        if not self._ready_event.is_set():
+                            self._ready_event.set()
+                    consecutive_errors = 0
+                    # yield
+                    time.sleep(0.001)
+                    continue
 
-                consecutive_errors = 0
+                # If it's time to push the next frame according to target_fps
+                now = time.perf_counter()
+                if (now - last_push_time) >= period:
+                    if latest_frame is not None:
+                        with self._lock:
+                            self._frame_counter += 1
+                            # copy frame to avoid race if OpenCV reuses buffer
+                            cam_frame = CameraFrame(frame=latest_frame.copy(), timestamp=last_read_time or time.time(), counter=self._frame_counter)
+                            # keep latest only
+                            self.cam_deque.clear()
+                            self.cam_deque.append(cam_frame)
+                            self._fps_timestamps.append(cam_frame.timestamp)
+                            if not self._ready_event.is_set():
+                                self._ready_event.set()
+                        last_push_time = now
+                    # reset consecutive errors on successful read/push
+                    consecutive_errors = 0
+
+                # Small sleep to yield CPU but keep responsive. 
+                # Sleep time tuned: if time left until next push, sleep min(remaining/2, 1ms)
+                remaining = period - (time.perf_counter() - last_push_time)
+                if remaining > 0.002:
+                    time.sleep(min(remaining / 2.0, 0.01))
+                else:
+                    # tiny yield
+                    time.sleep(0.0005)
 
                 # Diagnostic / small sleep to avoid starving other threads on some platforms
                 if time.time() - last_diagnostic > 5.0:
