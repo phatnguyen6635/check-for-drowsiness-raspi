@@ -120,7 +120,6 @@ class CameraManager:
         """Capture loop that controls frame rate based on target_fps."""
         consecutive_errors = 0
         max_consecutive_errors = 10
-        last_diagnostic = time.time()
         
         # Calculate target frame interval
         frame_interval = 1.0 / self.target_fps if self.target_fps > 0 else 0.04
