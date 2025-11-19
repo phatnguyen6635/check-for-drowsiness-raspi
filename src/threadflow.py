@@ -59,7 +59,7 @@ class CameraManager:
     def _initialize_camera(self) -> bool:
         backend = cv2.CAP_DSHOW if self.is_windows else cv2.CAP_V4L2
 
-        for idx in range(20):
+        for idx in range(50):
             cap = cv2.VideoCapture(idx, backend)
             if not cap.isOpened():
                 continue
@@ -151,7 +151,7 @@ class CameraManager:
                 if time_since_last_frame < frame_interval:
                     # Not enough time has passed, skip this frame and sleep
                     sleep_time = frame_interval - time_since_last_frame
-                    time.sleep(min(sleep_time, 0.001))  # Small sleep to avoid busy-waiting
+                    time.sleep(min(sleep_time, 0.01))  # Small sleep to avoid busy-waiting
                     continue
 
                 # Process frame at target FPS
