@@ -59,7 +59,7 @@ class CameraManager:
     def _initialize_camera(self) -> bool:
         backend = cv2.CAP_DSHOW if self.is_windows else cv2.CAP_V4L2
 
-        for idx in range(20):
+        for idx in range(50):
             cap = cv2.VideoCapture(idx, backend)
             if not cap.isOpened():
                 continue
@@ -117,10 +117,13 @@ class CameraManager:
             return False
 
     def _capture_loop(self) -> None:
-        """Capture loop that always keeps only the newest frame in cam_deque."""
+        """Capture loop that controls frame rate based on target_fps."""
         consecutive_errors = 0
         max_consecutive_errors = 10
-        last_diagnostic = time.time()
+        
+        # Calculate target frame interval
+        frame_interval = 1.0 / self.target_fps if self.target_fps > 0 else 0.04
+        last_frame_time = time.time()
 
         while not self._stop_event.is_set():
             try:
@@ -134,31 +137,37 @@ class CameraManager:
                             break
                         continue
 
-                # Use read() (grab/retrieve could be used as well)
+                # Read frame without blocking
                 ret, frame = self.cap.read()
                 if not ret or frame is None:
                     consecutive_errors += 1
                     time.sleep(0.001)
                     continue
 
-                now = time.time()
+                # Check if enough time has passed for target FPS
+                current_time = time.time()
+                time_since_last_frame = current_time - last_frame_time
+
+                if time_since_last_frame < frame_interval:
+                    # Not enough time has passed, skip this frame and sleep
+                    sleep_time = frame_interval - time_since_last_frame
+                    time.sleep(min(sleep_time, 0.01))  # Small sleep to avoid busy-waiting
+                    continue
+
+                # Process frame at target FPS
+                last_frame_time = current_time
 
                 with self._lock:
                     self._frame_counter += 1
-                    cam_frame = CameraFrame(frame=frame, timestamp=now, counter=self._frame_counter)
-                    # keep latest only
+                    cam_frame = CameraFrame(frame=frame, timestamp=current_time, counter=self._frame_counter)
+                    # Keep latest only
                     self.cam_deque.clear()
                     self.cam_deque.append(cam_frame)
-                    self._fps_timestamps.append(now)
+                    self._fps_timestamps.append(current_time)
                     if not self._ready_event.is_set():
                         self._ready_event.set()
-                    time.sleep(0.001)  # Yield to other threads
 
                 consecutive_errors = 0
-
-                # Diagnostic / small sleep to avoid starving other threads on some platforms
-                if time.time() - last_diagnostic > 5.0:
-                    last_diagnostic = time.time()
 
             except Exception as e:
                 self.logger.error(f"Error in capture loop: {e}", exc_info=True)
