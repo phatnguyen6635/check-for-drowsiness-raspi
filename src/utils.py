@@ -45,7 +45,7 @@ def initialize_gpio(led_pin, logger):
     try:
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(led_pin, GPIO.OUT)
-        GPIO.output(led_pin, GPIO.HIGH)
+        GPIO.output(led_pin, GPIO.LOW)
         logger.info(f"GPIO initialized on pin {led_pin}")
         return True
     
@@ -53,24 +53,11 @@ def initialize_gpio(led_pin, logger):
         logger.error(f"Failed to initialize GPIO: {e}")
         return False
 
-def flash_led(led_pin, gpio_enabled, logger, duration=2):
-    """Flash LED for a duration (non-blocking)."""
-    if not gpio_enabled:
-        return
-    def _blink():
-        try:
-            GPIO.output(led_pin, GPIO.HIGH)
-            time.sleep(duration)
-            GPIO.output(led_pin, GPIO.LOW)
-        except Exception as e:
-            logger.error(f"GPIO blink error: {e}")
-    threading.Thread(target=_blink, daemon=True).start()
-
 def set_relay(gpio_enabled, led_pin, logger, state):
     if not gpio_enabled:
         return
     try:
-        GPIO.output(led_pin, GPIO.HIGH if not state else GPIO.LOW)
+        GPIO.output(led_pin, GPIO.HIGH if state else GPIO.LOW)
     except Exception as e:
         logger.error(f"GPIO blink error: {e}")
   

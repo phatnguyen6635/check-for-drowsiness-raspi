@@ -1,9 +1,9 @@
 blink_threshold_pitch: 0.7
-blink_threshold_wo_pitch: 0.4
+blink_threshold_wo_pitch: 0.5
 delay_drowsy_threshold: 2.0
-frame_height: 480
+frame_height: 720
 frame_rate: 10
-frame_width: 640
+frame_width: 1280
 led_pin: 21
 min_face_detection_confidence: 0.4
 min_face_presence_confidence: 0.6

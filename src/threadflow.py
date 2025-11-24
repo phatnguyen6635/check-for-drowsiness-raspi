@@ -158,6 +158,7 @@ class CameraManager:
                 last_frame_time = current_time
 
                 with self._lock:
+                    frame = self._crop_frame(frame)
                     self._frame_counter += 1
                     cam_frame = CameraFrame(frame=frame, timestamp=current_time, counter=self._frame_counter)
                     # Keep latest only
@@ -193,6 +194,29 @@ class CameraManager:
             if not self.cam_deque:
                 return None
             return self.cam_deque[-1]
+        
+    def _crop_frame(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Crop the frame to a specific region of interest (ROI).
+        
+        Args:
+            frame: Input frame from camera
+            
+        Returns:
+            Cropped frame
+        """
+        # Get frame dimensions
+        h, w = frame.shape[:2]
+        
+        # Define crop coordinates: x_start, y_start, crop_width, crop_height
+        # Example: crop the center region, leaving 100 pixels margin on all sides
+        x_start, y_start = 320, 120
+        crop_width, crop_height = 640, 480
+        
+        # Perform cropping using array slicing
+        cropped_frame = frame[y_start:y_start+crop_height, x_start:x_start+crop_width]
+        
+        return cropped_frame
 
     def get_fps(self) -> float:
         with self._lock:

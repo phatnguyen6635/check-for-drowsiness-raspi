@@ -322,7 +322,7 @@ class CameraView(tk.Canvas):
             target_w = int(fw * scale)
             target_h = int(fh * scale)
 
-            # 🩹 fix: tránh lỗi resize 0
+            # fix: tránh lỗi resize 0
             if target_w <= 0 or target_h <= 0:
                 return
 
