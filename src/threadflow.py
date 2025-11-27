@@ -214,7 +214,9 @@ class CameraManager:
         crop_width, crop_height = 640, 480
         
         # Perform cropping using array slicing
-        cropped_frame = frame[y_start:y_start+crop_height, x_start:x_start+crop_width]
+        # cropped_frame = frame[y_start:y_start+crop_height, x_start:x_start+crop_width]
+        cropped_frame = frame[:, x_start:x_start+crop_width]
+
         
         return cropped_frame
 
