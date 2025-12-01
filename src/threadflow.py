@@ -207,17 +207,11 @@ class CameraManager:
         """
         # Get frame dimensions
         h, w = frame.shape[:2]
-        
-        # Define crop coordinates: x_start, y_start, crop_width, crop_height
-        # Example: crop the center region, leaving 100 pixels margin on all sides
-        x_start, y_start = 320, 120
-        crop_width, crop_height = 640, 480
-        
+    
+        x_start = 220
+        crop_width = w - x_start*2
         # Perform cropping using array slicing
-        # cropped_frame = frame[y_start:y_start+crop_height, x_start:x_start+crop_width]
         cropped_frame = frame[:, x_start:x_start+crop_width]
-
-        
         return cropped_frame
 
     def get_fps(self) -> float:
